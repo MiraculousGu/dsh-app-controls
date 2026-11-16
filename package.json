@@ -1,7 +1,7 @@
 {
   "name": "dsh-app-controls",
-  "version": "0.3.0",
-  "description": "DeepSeek Harness Web GUI controls and KDE tray icon: check/update DSH, quit/restart the local service, open the window, view status and logs.",
+  "version": "0.4.0",
+  "description": "DeepSeek Harness Web GUI controls and KDE tray icon, with per-feature settings and a remembered default window size.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

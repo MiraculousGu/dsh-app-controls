@@ -4,9 +4,10 @@
 A small PyQt5 tray icon that talks to the running dsh-app-controls host over
 the loopback Unix socket (`~/.local/state/dsh-app-controls/control.sock`).
 
-Features: status/tooltip, open/focus the Web GUI, check for updates, update
-with progress, restart/stop the service (the open page closes itself), open
-logs, copy the URL, autostart at login and notifications.
+Features: status/tooltip, open/focus the Web GUI, open the plugin/plugins-settings
+pages, check for updates, update with progress, restart/stop the service (the
+open page closes itself), open logs, copy the URL and notifications. The tray
+enable/disable and autostart state are managed by the plugin settings panel.
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ PLUGIN_DIR = Path(__file__).resolve().parent.parent
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "dsh-app-controls"
 SOCKET_PATH = STATE_DIR / "control.sock"
 TRAY_LOG = STATE_DIR / "tray.log"
+TRAY_PID_FILE = STATE_DIR / "tray.pid"
 WEB_LOG = HOME / ".local/state/dsh-web/web.log"
 LAUNCHER = os.environ.get("DSH_WEB_LAUNCHER", str(HOME / ".local/bin/dsh-web-launch"))
 URL = os.environ.get("DSH_WEB_URL", "http://127.0.0.1:3080/")
@@ -182,6 +184,10 @@ class Tray(QSystemTrayIcon):
         self.plugins_action.triggered.connect(self.open_plugins)
         self.menu.addAction(self.plugins_action)
 
+        self.settings_action = QAction("插件设置", self)
+        self.settings_action.triggered.connect(self.open_settings)
+        self.menu.addAction(self.settings_action)
+
         self.status_action = QAction("状态：正在连接…", self)
         self.status_action.setEnabled(False)
         self.menu.addAction(self.status_action)
@@ -207,12 +213,6 @@ class Tray(QSystemTrayIcon):
         self.copy_action.triggered.connect(self.copy_url)
         self.menu.addAction(self.copy_action)
         self.menu.addSeparator()
-
-        self.autostart_action = QAction("开机自启", self)
-        self.autostart_action.setCheckable(True)
-        self.autostart_action.setChecked(AUTOSTART.exists())
-        self.autostart_action.triggered.connect(self.toggle_autostart)
-        self.menu.addAction(self.autostart_action)
 
         self.quit_action = QAction("退出托盘", self)
         self.quit_action.triggered.connect(self.app.quit)
@@ -339,41 +339,13 @@ class Tray(QSystemTrayIcon):
         if self.status is None:
             self._notify("服务未运行", "请先点击托盘图标启动 DeepSeek Harness。")
             return
-        self._open_url(URL + "#dsh-app-controls/plugins")
+        self._run_launcher("dsh-app-controls/plugins")
 
-    @staticmethod
-    def _chrome_bin() -> str | None:
-        for path in (
-            "/usr/bin/google-chrome-stable",
-            "/opt/google/chrome/google-chrome",
-            "/usr/bin/google-chrome",
-            "/usr/bin/chromium",
-            "/usr/bin/chromium-browser",
-        ):
-            if os.path.exists(path):
-                return path
-        return None
-
-    def _open_url(self, url: str) -> None:
-        browser = self._chrome_bin()
-        try:
-            if browser is not None:
-                profile = os.environ.get("DSH_CHROME_PROFILE", "Default")
-                subprocess.Popen(
-                    [browser, f"--profile-directory={profile}", f"--app={url}"],
-                    start_new_session=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            else:
-                subprocess.Popen(
-                    ["xdg-open", url],
-                    start_new_session=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-        except Exception as error:
-            self._notify("无法打开窗口", str(error))
+    def open_settings(self) -> None:
+        if self.status is None:
+            self._notify("服务未运行", "请先点击托盘图标启动 DeepSeek Harness。")
+            return
+        self._run_launcher("dsh-app-controls/settings")
 
     def launch(self) -> None:
         if self.starting:
@@ -405,11 +377,17 @@ class Tray(QSystemTrayIcon):
             self._apply_state("stopped")
             self._refresh_menu()
 
-    def _run_launcher(self) -> None:
+    def _run_launcher(self, hash_value: str | None = None) -> None:
+        env = dict(os.environ)
+        if hash_value:
+            env["DSH_WEB_HASH"] = hash_value
+        else:
+            env.pop("DSH_WEB_HASH", None)
         try:
             subprocess.Popen(
                 [LAUNCHER],
                 cwd=str(HOME),
+                env=env,
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -484,36 +462,6 @@ class Tray(QSystemTrayIcon):
     def copy_url(self) -> None:
         QGuiApplication.clipboard().setText(URL)
         self._notify("已复制访问地址", URL)
-
-    def toggle_autostart(self, checked: bool) -> None:
-        try:
-            if checked:
-                AUTOSTART.parent.mkdir(parents=True, exist_ok=True)
-                script = Path(__file__).resolve()
-                icon = ICON_SVG if ICON_SVG.exists() else "applications-development"
-                content = (
-                    "[Desktop Entry]\n"
-                    "Type=Application\n"
-                    "Name=DeepSeek Harness Tray\n"
-                    "Comment=DeepSeek Harness status and controls in the system tray\n"
-                    f'Exec=/usr/bin/python3 "{script}"\n'
-                    f"Icon={icon}\n"
-                    "Terminal=false\n"
-                    "X-KDE-autostart-after=panel\n"
-                    "OnlyShowIn=KDE;\n"
-                )
-                AUTOSTART.write_text(content, encoding="utf-8")
-                AUTOSTART.chmod(0o644)
-                self._notify("开机自启已开启", "登录后会启动 DeepSeek Harness 托盘图标")
-            else:
-                if AUTOSTART.exists():
-                    AUTOSTART.unlink()
-                self._notify("开机自启已关闭", "登录后不再自动启动托盘图标")
-        except Exception as error:
-            self.autostart_action.setChecked(AUTOSTART.exists())
-            self._notify("设置开机自启失败", str(error))
-            return
-        self.autostart_action.setChecked(AUTOSTART.exists())
 
     def _on_activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.MiddleClick):
@@ -602,6 +550,7 @@ class Tray(QSystemTrayIcon):
 
         self.restart_action.setText("重启服务" if running else "启动服务")
         self.plugins_action.setEnabled(running)
+        self.settings_action.setEnabled(running)
         self.stop_action.setEnabled(running)
         self.copy_action.setEnabled(running)
         self.logs_action.setEnabled(True)
@@ -633,15 +582,29 @@ def main() -> int:
     except BlockingIOError:
         print("dsh-tray is already running", file=sys.stderr)
         return 0
+    try:
+        TRAY_PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+    except Exception:
+        pass
     app = QApplication(sys.argv)
     app.setApplicationName("dsh-tray")
     app.setQuitOnLastWindowClosed(False)
     if not QSystemTrayIcon.isSystemTrayAvailable():
         log("system tray is not available")
         print("system tray is not available", file=sys.stderr)
+        try:
+            TRAY_PID_FILE.unlink()
+        except Exception:
+            pass
         return 1
     tray = Tray(app)
-    return app.exec_()
+    try:
+        return app.exec_()
+    finally:
+        try:
+            TRAY_PID_FILE.unlink()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

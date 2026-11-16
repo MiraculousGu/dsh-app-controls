@@ -34,6 +34,7 @@ if (dshBin === undefined) {
 // process.argv[1] to find the installation root.
 process.argv[1] = dshBin
 process.env.DSH_APP_CONTROLS_DISABLE_SOCKET = '1'
+process.env.DSH_APP_CONTROLS_DISABLE_TRAY = '1'
 
 const update = await import(path.join(root, 'lib/update.js'))
 
@@ -100,7 +101,7 @@ if (fs.existsSync(runtimeBin)) {
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
   assert.equal(pkg.name, 'dsh-app-controls')
-  assert.equal(pkg.version, '0.3.0')
+  assert.equal(pkg.version, '0.4.0')
   assert.equal(pkg.author.name, 'Tianrun Gu')
   assert.match(pkg.author.email, /MiraculousGu@users\.noreply\.github\.com$/u)
   assert.ok(pkg.description.includes('DeepSeek Harness'))
@@ -157,19 +158,22 @@ const hostCtx = {
   effect() {},
 }
 apply(hostCtx)
-assert.equal(routes.length, 4)
+assert.equal(routes.length, 5)
 const quitRoute = routes.find((route) => route.path === '/api/dsh-app-controls/quit')
 const updateRoute = routes.find((route) => route.path === '/api/dsh-app-controls/update')
 const progressRoute = routes.find((route) => route.path === '/api/dsh-app-controls/update-progress')
 const stateRoute = routes.find((route) => route.path === '/api/dsh-app-controls/state')
+const settingsRoute = routes.find((route) => route.path === '/api/dsh-app-controls/settings')
 assert.ok(quitRoute)
 assert.ok(updateRoute)
 assert.ok(progressRoute)
 assert.ok(stateRoute)
+assert.ok(settingsRoute)
 assert.deepEqual(quitRoute.methods, ['POST'])
 assert.deepEqual(updateRoute.methods, ['GET', 'POST'])
 assert.deepEqual(progressRoute.methods, ['GET'])
 assert.deepEqual(stateRoute.methods, ['GET'])
+assert.deepEqual(settingsRoute.methods, ['GET', 'POST'])
 ok('routes registered')
 
 const stateResponse = await stateRoute.fetch(
@@ -182,6 +186,17 @@ assert.equal(stateBody.running, true)
 assert.equal(stateBody.quitRequested, false)
 assert.equal(stateBody.job.active, false)
 ok('GET state route')
+
+const settingsResponse = await settingsRoute.fetch(
+  new Request('http://127.0.0.1:3080/api/dsh-app-controls/settings', { method: 'GET' }),
+)
+const settingsBody = await settingsResponse.json()
+assert.equal(settingsResponse.status, 200)
+assert.equal(settingsBody.ok, true)
+assert.equal(typeof settingsBody.settings.trayEnabled, 'boolean')
+assert.equal(typeof settingsBody.settings.features.updateButton, 'boolean')
+assert.equal(typeof settingsBody.settings.window.width, 'number')
+ok('GET settings route')
 
 const idleProgress = await progressRoute.fetch(
   new Request('http://127.0.0.1:3080/api/dsh-app-controls/update-progress', { method: 'GET' }),
@@ -274,16 +289,19 @@ const clientCtx = {
   },
 }
 clientModule.apply(clientCtx)
-assert.deepEqual(injectedSlots, ['conversation.session.header.utilities', 'shell.overlay'])
-assert.equal(registered.length, 2)
+assert.deepEqual(injectedSlots, ['conversation.session.header.utilities', 'shell.overlay', 'plugins.bundle.config'])
+assert.equal(registered.length, 3)
 const headerEntry = registered.find((entry) => entry.options.name === 'conversation.session.header.utilities')
 const overlayEntry = registered.find((entry) => entry.options.name === 'shell.overlay')
+const settingsEntry = registered.find((entry) => entry.options.name === 'plugins.bundle.config')
 assert.ok(headerEntry)
 assert.ok(overlayEntry)
+assert.ok(settingsEntry)
+assert.equal(settingsEntry.options.key, 'dsh-app-controls')
 assert.equal(headerEntry.options.id, 'dsh-app-controls')
 assert.equal(headerEntry.options.order, 100)
 assert.equal(overlayEntry.options.id, 'dsh-app-controls-overlay')
-ok('client registers into header utilities and shell.overlay slots')
+ok('client registers into header utilities, shell.overlay and plugin settings slots')
 
 function buttonChildren(tree) {
   return tree.children

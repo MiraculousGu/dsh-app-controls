@@ -11,10 +11,10 @@ Adds two controls to the DeepSeek Harness (DSH) Web GUI: **quit the local `dsh w
 | Field | Value |
 | --- | --- |
 | Name | `dsh-app-controls` (DeepSeek Harness app controls) |
-| Version | `0.3.0` |
+| Version | `0.4.0` |
 | Author | Tianrun Gu ([@MiraculousGu](https://github.com/MiraculousGu)) |
 | Environment | DeepSeek Harness `0.2.2-rc.x` **Web profile** (currently `0.2.2-rc.3`); Linux + KDE desktop, Chrome `--app` window; Node.js 20+ |
-| Features | ① **Check and update DSH**: confirm, download/install in the background, progress dialog with phase / percent / elapsed time / npm activity, atomic swap, exit and close the window. ② **Quit DSH**: confirm, gracefully stop the whole local `dsh web` service, and close the window. ③ **KDE system tray** (`tray/dsh-tray.py`): status, open, check/update, restart, stop, logs, copy URL, autostart and notifications. |
+| Features | ① **Check and update DSH**: confirm, download/install in the background, progress dialog with phase / percent / elapsed time / npm activity, atomic swap, exit and close the window. ② **Quit DSH**: confirm, gracefully stop the whole local `dsh web` service, and close the window. ③ **KDE system tray** (`tray/dsh-tray.py`): status, open, check/update, restart, stop, logs, copy URL and notifications. ④ **Plugin settings**: tray on/off, per-feature visibility and a remembered default window size. |
 | Repository | https://github.com/MiraculousGu/dsh-app-controls |
 | License | MIT |
 
@@ -47,9 +47,9 @@ opening the Web GUI:
 - Tooltip: state, installed version, address, uptime, update availability and
   update progress.
 - Left click: open/focus the Web GUI (starts the service if needed).
-- Right-click menu: **Open**, **Open Plugins**, **Check for updates / Update to
-  vX**, **Restart service**, **Stop service** (the open page closes its window
-  itself), **Open logs**, **Copy URL**, **Autostart at login**, **Quit tray**.
+- Right-click menu: **Open**, **Open Plugins**, **Plugin settings**, **Check for
+  updates / Update to vX**, **Restart service**, **Stop service** (the open page
+  closes its window itself), **Open logs**, **Copy URL**, **Quit tray**.
 - Notifications: update available/completed, service stopped, start failure.
 - The helper talks to the host over
   `~/.local/state/dsh-app-controls/control.sock` (mode 0600); no browser token
@@ -59,6 +59,16 @@ Prerequisites: Python 3 + PyQt5 (`python3-pyqt5` on Arch/CachyOS) and a KDE
 Plasma session (`xembedsniproxy` is part of the default Plasma 6 session).
 Start it with `python3 tray/dsh-tray.py`, diagnose with
 `python3 tray/dsh-tray.py --check`, and enable autostart from the tray menu.
+
+### Plugin settings
+
+Open **Plugins → DeepSeek Harness 应用控制** and use the settings section at the bottom (the tray menu's **Plugin settings** opens it too):
+
+- **System tray icon** — enables/disables the tray helper and its login autostart.
+- **Button visibility** — check/update button, quit button, conversation-header entry and main-interface top-right entry.
+- **Default window size** — width/height, **Remember current size** and **Use automatic size**. Applied the next time a window opens.
+
+Settings live in `~/.local/state/dsh-app-controls/settings.json` and are shared by the host, tray and launcher. Tray enable/disable and the window size are applied on the next DSH start/window launch; button visibility changes immediately. The launcher uses a dedicated Chrome profile (`~/.local/share/dsh-web-chrome`) so the saved `--window-size` is reliably applied; DSH authentication is still seeded by the launch token.
 
 ## Install
 
@@ -113,10 +123,10 @@ MIT © 2026 Tianrun Gu. See [LICENSE](LICENSE).
 | 项目 | 内容 |
 | --- | --- |
 | 名称 | `dsh-app-controls`（DeepSeek Harness 应用控制） |
-| 版本 | `0.3.0` |
+| 版本 | `0.4.0` |
 | 作者 | Tianrun Gu（[@MiraculousGu](https://github.com/MiraculousGu)） |
 | 适用环境 | DeepSeek Harness `0.2.2-rc.x` 的 **Web profile**（当前 `0.2.2-rc.3`）；Linux + KDE 桌面、Chrome `--app` 应用窗口；Node.js 20+ |
-| 功能 | ① **检查并更新 DSH**：确认后后台下载安装，进度弹窗显示阶段 / 百分比 / 已用时 / npm 活动日志，完成后原子切换、退出服务并自动关窗。② **退出 DSH**：确认后优雅结束整个本地 `dsh web` 服务并自动关窗。③ **KDE 系统托盘**（`tray/dsh-tray.py`）：状态、打开、检查/更新、重启、停止、日志、复制地址、开机自启与通知。 |
+| 功能 | ① **检查并更新 DSH**：确认后后台下载安装，进度弹窗显示阶段 / 百分比 / 已用时 / npm 活动日志，完成后原子切换、退出服务并自动关窗。② **退出 DSH**：确认后优雅结束整个本地 `dsh web` 服务并自动关窗。③ **KDE 系统托盘**（`tray/dsh-tray.py`）：状态、打开、检查/更新、重启、停止、日志、复制地址与通知。④ **插件设置**：托盘开关、各功能显示/隐藏，以及可记住的默认启动窗口大小。 |
 | 仓库 | https://github.com/MiraculousGu/dsh-app-controls |
 | 许可证 | MIT |
 
@@ -147,11 +157,21 @@ MIT © 2026 Tianrun Gu. See [LICENSE](LICENSE).
 
 - Tooltip：状态、版本、地址、运行时长、可更新版本与更新进度；
 - 左键：打开/聚焦 Web 界面（服务未运行时先启动）；
-- 右键菜单：**打开**、**打开插件管理**、**检查更新 / 更新到 vX**、**重启服务**、**停止服务**（打开中的页面会自行关闭窗口）、**打开日志**、**复制访问地址**、**开机自启**、**退出托盘**；
+- 右键菜单：**打开**、**打开插件管理**、**插件设置**、**检查更新 / 更新到 vX**、**重启服务**、**停止服务**（打开中的页面会自行关闭窗口）、**打开日志**、**复制访问地址**、**退出托盘**；
 - 通知：更新可用/完成、服务停止、启动失败；
 - 托盘通过 `~/.local/state/dsh-app-controls/control.sock`（权限 0600）与宿主通信，不保存浏览器 token/cookie。
 
 前置条件：Python 3 + PyQt5（Arch/CachyOS 上是 `python3-pyqt5`）、KDE Plasma 会话（`xembedsniproxy` 属于默认 Plasma 6 会话）。启动：`python3 tray/dsh-tray.py`；诊断：`python3 tray/dsh-tray.py --check`；开机自启可在托盘菜单里切换。
+
+### 插件设置
+
+打开 **插件 → DeepSeek Harness 应用控制**，使用详情底部的设置区（托盘菜单的 **插件设置** 也会打开这里）：
+
+- **系统托盘图标**：启用/停用托盘 helper 及登录自启；
+- **按钮显示**：检查更新按钮、退出按钮、对话标题栏入口、主界面右上角入口；
+- **默认启动窗口大小**：宽度/高度、**记住当前窗口大小**、**恢复自动**；下次打开窗口时生效。
+
+设置保存在 `~/.local/state/dsh-app-controls/settings.json`，由宿主、托盘和启动器共享。托盘开关与窗口大小在下次启动 DSH / 打开窗口时生效，按钮显示/隐藏立即生效。启动器使用独立的 Chrome 配置目录（`~/.local/share/dsh-web-chrome`），确保保存的 `--window-size` 可靠生效；DSH 鉴权仍通过启动令牌完成。
 
 ## 安装
 
