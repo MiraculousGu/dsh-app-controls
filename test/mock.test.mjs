@@ -12,7 +12,24 @@ import vm from 'node:vm'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const dshBin = '/home/flex/.npm/_npx/1e7f6d9597241db0/node_modules/.bin/dsh'
+
+function findDshBin() {
+  const candidates = [process.env.DSH_BIN, path.join(os.homedir(), '.local/share/dsh-runtime/node_modules/.bin/dsh')]
+  try {
+    for (const entry of fs.readdirSync(path.join(os.homedir(), '.npm/_npx'))) {
+      candidates.push(path.join(os.homedir(), '.npm/_npx', entry, 'node_modules/.bin/dsh'))
+    }
+  } catch {
+    // no npx cache
+  }
+  return candidates.find((candidate) => typeof candidate === 'string' && fs.existsSync(candidate))
+}
+
+const dshBin = findDshBin()
+if (dshBin === undefined) {
+  console.log('SKIP: no dsh installation found (set DSH_BIN to the dsh bin path)')
+  process.exit(0)
+}
 // Simulate being loaded from the running dsh process: locateInstall() reads
 // process.argv[1] to find the installation root.
 process.argv[1] = dshBin
@@ -41,7 +58,7 @@ function installedVersionFor(bin) {
 
 const install = update.locateInstall(dshBin)
 assert.equal(install.version, installedVersionFor(dshBin))
-assert.equal(install.range, '^0.2.2-rc.1')
+assert.match(install.range, /^\^0\.2\.2-rc\./u)
 assert.equal(path.basename(install.packageDir), 'dsh')
 assert.equal(fs.existsSync(path.join(install.packageDir, 'lib', 'bin.js')), true)
 ok('locateInstall', `${install.version} at ${install.root}`)
@@ -103,15 +120,20 @@ if (fs.existsSync(runtimeBin)) {
 // ── real registry check (network; no install) ──────────────────────────────
 const versions = await update.npmViewVersions(`${update.PACKAGE_NAME}@${install.range}`)
 assert.equal(versions.ok, true, versions.ok ? '' : versions.error)
-assert.deepEqual(versions.versions, ['0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3'])
+assert.ok(versions.versions.length > 0)
+for (const version of versions.versions) assert.match(version, /^\d+\.\d+\.\d+/u)
+for (let index = 1; index < versions.versions.length; index += 1) {
+  assert.equal(update.compareVersions(versions.versions[index - 1], versions.versions[index]) <= 0, true)
+}
+assert.ok(versions.versions.includes(install.version))
 ok('npmViewVersions', versions.versions.join(', '))
 
 const status = await update.checkUpdates(dshBin)
 assert.equal(status.ok, true)
-assert.equal(status.current, '0.2.2-rc.1')
-assert.equal(status.candidate, '0.2.2-rc.3')
-assert.equal(status.updateAvailable, true)
-assert.equal(status.channel, 'next')
+assert.equal(status.current, install.version)
+assert.ok(status.versions.includes(status.candidate))
+assert.equal(status.updateAvailable, update.compareVersions(status.candidate, status.current) > 0)
+assert.ok(['latest', 'next', 'published'].includes(status.channel))
 ok('checkUpdates', `current=${status.current} candidate=${status.candidate} channel=${status.channel}`)
 
 // ── host plugin routes with a mocked Cordis context ────────────────────────
@@ -160,8 +182,8 @@ const statusResponse = await updateRoute.fetch(
 )
 const statusBody = await statusResponse.json()
 assert.equal(statusResponse.status, 200)
-assert.equal(statusBody.current, '0.2.2-rc.1')
-assert.equal(statusBody.candidate, '0.2.2-rc.3')
+assert.equal(statusBody.current, install.version)
+assert.ok(typeof statusBody.candidate === 'string' && statusBody.candidate.length > 0)
 ok('GET update route', `${statusBody.current} -> ${statusBody.candidate}`)
 
 const quitResponse = await quitRoute.fetch(

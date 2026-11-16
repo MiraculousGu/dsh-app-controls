@@ -9,7 +9,7 @@ DeepSeek Harness（DSH）Web 界面的工具栏扩展：一键 **退出本地服
 | 名称 | dsh-app-controls（DeepSeek Harness 应用控制） |
 | 版本 | 0.2.0 |
 | 作者 | Tianrun Gu（[@MiraculousGu](https://github.com/MiraculousGu)） |
-| 适用环境 | DeepSeek Harness `0.2.2-rc.1` 的 **Web profile**；Linux + KDE 桌面、Chrome `--app` 应用窗口；Node.js 20+ |
+| 适用环境 | DeepSeek Harness `0.2.2-rc.x` 的 **Web profile**（当前 0.2.2-rc.3）；Linux + KDE 桌面、Chrome `--app` 应用窗口；Node.js 20+ |
 | 功能 | ① **检查并更新 DSH**：确认后后台下载安装，带阶段/百分比/耗时/日志的进度弹窗，完成后原子切换并退出服务、自动关窗；② **退出 DSH**：确认后优雅结束整个 `dsh web` 服务并自动关窗 |
 | 仓库 | https://github.com/MiraculousGu/dsh-app-controls |
 | 许可证 | MIT |
@@ -38,8 +38,8 @@ DeepSeek Harness（DSH）Web 界面的工具栏扩展：一键 **退出本地服
 ## 安装
 
 ```sh
-# 从本目录安装（link: 方式）
-/home/flex/.npm/_npx/1e7f6d9597241db0/node_modules/.bin/dsh plugin --profile web add /home/flex/.local/share/dsh-app-controls
+# 本地目录安装（link: 方式）
+dsh plugin --profile web add /path/to/dsh-app-controls
 
 # 或从 GitHub 安装（支持 git spec 的安装方式）
 dsh plugin --profile web add github:MiraculousGu/dsh-app-controls
