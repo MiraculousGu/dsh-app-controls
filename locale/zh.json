@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "DeepSeek Harness 应用控制",
-    "description": "为 DeepSeek Harness Web 界面增加「检查并更新」与「退出」两个按钮，对话标题栏和主界面右上角都会显示。更新会弹出进度对话框，把新版本安装到运行时副本并原子切换，完成后退出服务并自动关闭窗口；退出会二次确认，优雅结束本地 dsh web 服务并关闭窗口。适用于 DeepSeek Harness 0.2.2-rc.x 的 Web profile（Linux/KDE、Chrome 应用窗口），需要 Node.js 20 及以上。"
+    "description": "为 DeepSeek Harness Web 界面增加「检查并更新」与「退出」两个按钮（对话标题栏与主界面右上角），并提供 KDE 系统托盘控制器 tray/dsh-tray.py。按钮支持带进度弹窗的检查更新，以及优雅停止服务并自动关窗；托盘图标显示运行状态，并提供打开窗口、检查/更新、重启、停止、查看日志、复制地址、开机自启等功能。适用于 DeepSeek Harness 0.2.2-rc.x 的 Web profile（Linux/KDE、Chrome 应用窗口），需要 Node.js 20+；托盘 helper 需要 PyQt5。"
   }
 }

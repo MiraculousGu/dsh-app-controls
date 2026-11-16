@@ -33,6 +33,7 @@ if (dshBin === undefined) {
 // Simulate being loaded from the running dsh process: locateInstall() reads
 // process.argv[1] to find the installation root.
 process.argv[1] = dshBin
+process.env.DSH_APP_CONTROLS_DISABLE_SOCKET = '1'
 
 const update = await import(path.join(root, 'lib/update.js'))
 
@@ -99,7 +100,7 @@ if (fs.existsSync(runtimeBin)) {
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
   assert.equal(pkg.name, 'dsh-app-controls')
-  assert.equal(pkg.version, '0.2.0')
+  assert.equal(pkg.version, '0.3.0')
   assert.equal(pkg.author.name, 'Tianrun Gu')
   assert.match(pkg.author.email, /MiraculousGu@users\.noreply\.github\.com$/u)
   assert.ok(pkg.description.includes('DeepSeek Harness'))
@@ -156,17 +157,31 @@ const hostCtx = {
   effect() {},
 }
 apply(hostCtx)
-assert.equal(routes.length, 3)
+assert.equal(routes.length, 4)
 const quitRoute = routes.find((route) => route.path === '/api/dsh-app-controls/quit')
 const updateRoute = routes.find((route) => route.path === '/api/dsh-app-controls/update')
 const progressRoute = routes.find((route) => route.path === '/api/dsh-app-controls/update-progress')
+const stateRoute = routes.find((route) => route.path === '/api/dsh-app-controls/state')
 assert.ok(quitRoute)
 assert.ok(updateRoute)
 assert.ok(progressRoute)
+assert.ok(stateRoute)
 assert.deepEqual(quitRoute.methods, ['POST'])
 assert.deepEqual(updateRoute.methods, ['GET', 'POST'])
 assert.deepEqual(progressRoute.methods, ['GET'])
+assert.deepEqual(stateRoute.methods, ['GET'])
 ok('routes registered')
+
+const stateResponse = await stateRoute.fetch(
+  new Request('http://127.0.0.1:3080/api/dsh-app-controls/state', { method: 'GET' }),
+)
+const stateBody = await stateResponse.json()
+assert.equal(stateResponse.status, 200)
+assert.equal(stateBody.ok, true)
+assert.equal(stateBody.running, true)
+assert.equal(stateBody.quitRequested, false)
+assert.equal(stateBody.job.active, false)
+ok('GET state route')
 
 const idleProgress = await progressRoute.fetch(
   new Request('http://127.0.0.1:3080/api/dsh-app-controls/update-progress', { method: 'GET' }),

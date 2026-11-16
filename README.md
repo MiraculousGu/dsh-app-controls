@@ -11,10 +11,10 @@ Adds two controls to the DeepSeek Harness (DSH) Web GUI: **quit the local `dsh w
 | Field | Value |
 | --- | --- |
 | Name | `dsh-app-controls` (DeepSeek Harness app controls) |
-| Version | `0.2.0` |
+| Version | `0.3.0` |
 | Author | Tianrun Gu ([@MiraculousGu](https://github.com/MiraculousGu)) |
 | Environment | DeepSeek Harness `0.2.2-rc.x` **Web profile** (currently `0.2.2-rc.3`); Linux + KDE desktop, Chrome `--app` window; Node.js 20+ |
-| Features | ① **Check and update DSH**: confirm, download/install in the background, progress dialog with phase / percent / elapsed time / npm activity, atomic swap, exit and close the window. ② **Quit DSH**: confirm, gracefully stop the whole local `dsh web` service, and close the window. |
+| Features | ① **Check and update DSH**: confirm, download/install in the background, progress dialog with phase / percent / elapsed time / npm activity, atomic swap, exit and close the window. ② **Quit DSH**: confirm, gracefully stop the whole local `dsh web` service, and close the window. ③ **KDE system tray** (`tray/dsh-tray.py`): status, open, check/update, restart, stop, logs, copy URL, autostart and notifications. |
 | Repository | https://github.com/MiraculousGu/dsh-app-controls |
 | License | MIT |
 
@@ -38,6 +38,27 @@ Adds two controls to the DeepSeek Harness (DSH) Web GUI: **quit the local `dsh w
 ### Quit DeepSeek Harness
 
 After a confirmation dialog it calls DSH's `appExit(0)` to gracefully shut down the whole local service (HTTP/WebSocket, session flush, child processes), then closes the window automatically. In a normal browser tab (where scripts cannot close the tab) the screen shows a manual-close hint instead.
+
+### KDE system tray (`tray/dsh-tray.py`)
+
+A PyQt5 tray helper shows the service in the KDE panel and controls it without
+opening the Web GUI:
+
+- Tooltip: state, installed version, address, uptime, update availability and
+  update progress.
+- Left click: open/focus the Web GUI (starts the service if needed).
+- Right-click menu: **Open**, **Open Plugins**, **Check for updates / Update to
+  vX**, **Restart service**, **Stop service** (the open page closes its window
+  itself), **Open logs**, **Copy URL**, **Autostart at login**, **Quit tray**.
+- Notifications: update available/completed, service stopped, start failure.
+- The helper talks to the host over
+  `~/.local/state/dsh-app-controls/control.sock` (mode 0600); no browser token
+  or cookie is stored in it.
+
+Prerequisites: Python 3 + PyQt5 (`python3-pyqt5` on Arch/CachyOS) and a KDE
+Plasma session (`xembedsniproxy` is part of the default Plasma 6 session).
+Start it with `python3 tray/dsh-tray.py`, diagnose with
+`python3 tray/dsh-tray.py --check`, and enable autostart from the tray menu.
 
 ## Install
 
@@ -92,10 +113,10 @@ MIT © 2026 Tianrun Gu. See [LICENSE](LICENSE).
 | 项目 | 内容 |
 | --- | --- |
 | 名称 | `dsh-app-controls`（DeepSeek Harness 应用控制） |
-| 版本 | `0.2.0` |
+| 版本 | `0.3.0` |
 | 作者 | Tianrun Gu（[@MiraculousGu](https://github.com/MiraculousGu)） |
 | 适用环境 | DeepSeek Harness `0.2.2-rc.x` 的 **Web profile**（当前 `0.2.2-rc.3`）；Linux + KDE 桌面、Chrome `--app` 应用窗口；Node.js 20+ |
-| 功能 | ① **检查并更新 DSH**：确认后后台下载安装，进度弹窗显示阶段 / 百分比 / 已用时 / npm 活动日志，完成后原子切换、退出服务并自动关窗。② **退出 DSH**：确认后优雅结束整个本地 `dsh web` 服务并自动关窗。 |
+| 功能 | ① **检查并更新 DSH**：确认后后台下载安装，进度弹窗显示阶段 / 百分比 / 已用时 / npm 活动日志，完成后原子切换、退出服务并自动关窗。② **退出 DSH**：确认后优雅结束整个本地 `dsh web` 服务并自动关窗。③ **KDE 系统托盘**（`tray/dsh-tray.py`）：状态、打开、检查/更新、重启、停止、日志、复制地址、开机自启与通知。 |
 | 仓库 | https://github.com/MiraculousGu/dsh-app-controls |
 | 许可证 | MIT |
 
@@ -119,6 +140,18 @@ MIT © 2026 Tianrun Gu. See [LICENSE](LICENSE).
 ### 退出 DeepSeek Harness
 
 确认后调用 DSH 的 `appExit(0)` 优雅结束整个本地服务（关闭 HTTP/WebSocket、落盘会话、终止子进程），随后自动关闭窗口。若窗口是普通浏览器标签页（脚本不允许关闭），会显示手动关闭提示。
+
+### KDE 系统托盘（`tray/dsh-tray.py`）
+
+一个 PyQt5 托盘 helper，在 KDE 面板里显示服务状态并直接控制，不需要打开网页：
+
+- Tooltip：状态、版本、地址、运行时长、可更新版本与更新进度；
+- 左键：打开/聚焦 Web 界面（服务未运行时先启动）；
+- 右键菜单：**打开**、**打开插件管理**、**检查更新 / 更新到 vX**、**重启服务**、**停止服务**（打开中的页面会自行关闭窗口）、**打开日志**、**复制访问地址**、**开机自启**、**退出托盘**；
+- 通知：更新可用/完成、服务停止、启动失败；
+- 托盘通过 `~/.local/state/dsh-app-controls/control.sock`（权限 0600）与宿主通信，不保存浏览器 token/cookie。
+
+前置条件：Python 3 + PyQt5（Arch/CachyOS 上是 `python3-pyqt5`）、KDE Plasma 会话（`xembedsniproxy` 属于默认 Plasma 6 会话）。启动：`python3 tray/dsh-tray.py`；诊断：`python3 tray/dsh-tray.py --check`；开机自启可在托盘菜单里切换。
 
 ## 安装
 

@@ -1,7 +1,7 @@
 {
   "name": "dsh-app-controls",
-  "version": "0.2.0",
-  "description": "DeepSeek Harness Web GUI toolbar extension: check/update the local DSH installation with a progress dialog, and quit the local dsh web service.",
+  "version": "0.3.0",
+  "description": "DeepSeek Harness Web GUI controls and KDE tray icon: check/update DSH, quit/restart the local service, open the window, view status and logs.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -15,7 +15,8 @@
     "lib",
     "cordis.patch.yml",
     "locale",
-    "icon.svg"
+    "icon.svg",
+    "tray"
   ],
   "icon": "./icon.svg",
   "author": {

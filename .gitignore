@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 /Tmp/
 /tmp/
+
+__pycache__/
+*.pyc
