@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "DeepSeek Harness app controls",
+    "description": "Adds check/update and quit buttons to the DeepSeek Harness Web GUI: they appear in the conversation header and in the top-right of the main interface. The update button shows a progress dialog, installs the newest version allowed by the running installation into a staging copy, swaps it in atomically, then exits the service and closes the window. The quit button asks for confirmation, gracefully stops the local dsh web service, and closes the window. Applicable to DeepSeek Harness 0.2.2-rc.1 Web profile on Linux (KDE, Chrome app window) and Node.js 20 and newer."
+  }
+}

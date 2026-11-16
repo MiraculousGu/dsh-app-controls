@@ -1,0 +1,62 @@
+{
+  "name": "dsh-app-controls",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness Web GUI toolbar extension: check/update the local DSH installation with a progress dialog, and quit the local dsh web service.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "locale",
+    "icon.svg"
+  ],
+  "icon": "./icon.svg",
+  "author": {
+    "name": "Tianrun Gu",
+    "email": "42752727+MiraculousGu@users.noreply.github.com",
+    "url": "https://github.com/MiraculousGu"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/MiraculousGu/dsh-app-controls#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MiraculousGu/dsh-app-controls.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MiraculousGu/dsh-app-controls/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "web-gui",
+    "toolbar",
+    "quit",
+    "update"
+  ],
+  "engines": {
+    "node": ">=20",
+    "dsh": "^0.2.2-rc.1"
+  },
+  "scripts": {
+    "test": "node test/mock.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [],
+      "immediately": true
+    },
+    "manifestVersion": 1
+  }
+}

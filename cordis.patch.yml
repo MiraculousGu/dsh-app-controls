@@ -1,0 +1,4 @@
+# dsh-app-controls bundle layer: mount the host half as an ordinary profile row.
+- insert:
+    - id: app-controls
+      name: 'dsh-app-controls'
