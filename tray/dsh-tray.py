@@ -7,13 +7,15 @@ the loopback Unix socket (`~/.local/state/dsh-app-controls/control.sock`).
 Features: status/tooltip, open/focus the Web GUI, open the plugin/plugins-settings
 pages, check for updates, update with progress, restart/stop the service (the
 open page closes itself), open logs, copy the URL and notifications. The tray
-enable/disable and autostart state are managed by the plugin settings panel.
+enable/disable and autostart state are managed by the plugin settings panel;
+the icon waits for Plasma's tray at login and pins itself into the panel.
 """
 from __future__ import annotations
 
 import fcntl
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -164,6 +166,8 @@ class Tray(QSystemTrayIcon):
         self.activated.connect(self._on_activated)
         self._apply_state("stopped")
         self.show()
+        QTimer.singleShot(1200, self._ensure_visible)
+        QTimer.singleShot(6000, self._ensure_visible)
 
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self.poll)
@@ -463,6 +467,58 @@ class Tray(QSystemTrayIcon):
         QGuiApplication.clipboard().setText(URL)
         self._notify("已复制访问地址", URL)
 
+    def _pin_in_panel(self) -> None:
+        """KDE may put a new SNI/XEmbed icon in the expanded tray; pin it."""
+        desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
+        if "KDE" not in desktop.upper() and "PLASMA" not in desktop.upper():
+            return
+        qdbus = shutil.which("qdbus6") or shutil.which("qdbus")
+        if not qdbus:
+            return
+        script = r'''
+var ps = panels();
+for (var pi = 0; pi < ps.length; pi++) {
+  var ws = ps[pi].widgets();
+  for (var i = 0; i < ws.length; i++) {
+    var w = ws[i];
+    if (w.type === "org.kde.plasma.systemtray") {
+      w.currentConfigGroup = ["General"];
+      function add(key, item) {
+        var raw = String(w.readConfig(key) || "");
+        var arr = raw.length ? raw.split(",") : [];
+        if (arr.indexOf(item) === -1) arr.push(item);
+        w.writeConfig(key, arr.filter(function(x){ return x.length > 0; }).join(","));
+      }
+      add("shownItems", "dsh-tray");
+      add("knownItems", "dsh-tray");
+      add("extraItems", "dsh-tray");
+      var hidden = String(w.readConfig("hiddenItems") || "").split(",").filter(function(x){ return x.length > 0 && x !== "dsh-tray"; });
+      w.writeConfig("hiddenItems", hidden.join(","));
+      w.reloadConfig();
+    }
+  }
+}
+'''
+        try:
+            subprocess.run(
+                [qdbus, "org.kde.plasmashell", "/PlasmaShell", "org.kde.PlasmaShell.evaluateScript", script],
+                timeout=8,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            log("pinned tray icon in KDE panel")
+        except Exception as error:
+            log(f"could not pin tray icon: {error}")
+
+    def _ensure_visible(self) -> None:
+        try:
+            if QSystemTrayIcon.isSystemTrayAvailable():
+                if not self.isVisible():
+                    self.show()
+                self._pin_in_panel()
+        except Exception as error:
+            log(f"could not ensure tray visibility: {error}")
+
     def _on_activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.MiddleClick):
             self.open_dsh()
@@ -589,15 +645,22 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("dsh-tray")
     app.setQuitOnLastWindowClosed(False)
-    if not QSystemTrayIcon.isSystemTrayAvailable():
+    holder = {}
+
+    def wait_for_tray(attempt: int = 0) -> None:
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            holder["tray"] = Tray(app)
+            return
+        if attempt < 30:
+            if attempt == 0:
+                log("system tray not ready; waiting")
+            QTimer.singleShot(2000, lambda: wait_for_tray(attempt + 1))
+            return
         log("system tray is not available")
         print("system tray is not available", file=sys.stderr)
-        try:
-            TRAY_PID_FILE.unlink()
-        except Exception:
-            pass
-        return 1
-    tray = Tray(app)
+        app.quit()
+
+    QTimer.singleShot(0, wait_for_tray)
     try:
         return app.exec_()
     finally:

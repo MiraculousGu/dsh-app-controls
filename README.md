@@ -11,7 +11,7 @@ Adds two controls to the DeepSeek Harness (DSH) Web GUI: **quit the local `dsh w
 | Field | Value |
 | --- | --- |
 | Name | `dsh-app-controls` (DeepSeek Harness app controls) |
-| Version | `0.4.0` |
+| Version | `0.4.1` |
 | Author | Tianrun Gu ([@MiraculousGu](https://github.com/MiraculousGu)) |
 | Environment | DeepSeek Harness `0.2.2-rc.x` **Web profile** (currently `0.2.2-rc.3`); Linux + KDE desktop, Chrome `--app` window; Node.js 20+ |
 | Features | ① **Check and update DSH**: confirm, download/install in the background, progress dialog with phase / percent / elapsed time / npm activity, atomic swap, exit and close the window. ② **Quit DSH**: confirm, gracefully stop the whole local `dsh web` service, and close the window. ③ **KDE system tray** (`tray/dsh-tray.py`): status, open, check/update, restart, stop, logs, copy URL and notifications. ④ **Plugin settings**: tray on/off, per-feature visibility and a remembered default window size. |
@@ -51,6 +51,7 @@ opening the Web GUI:
   updates / Update to vX**, **Restart service**, **Stop service** (the open page
   closes its window itself), **Open logs**, **Copy URL**, **Quit tray**.
 - Notifications: update available/completed, service stopped, start failure.
+- At login the helper waits for Plasma's tray to become ready and pins itself into the KDE panel's shown items, so KDE does not leave it in the expanded/overflow area.
 - The helper talks to the host over
   `~/.local/state/dsh-app-controls/control.sock` (mode 0600); no browser token
   or cookie is stored in it.
@@ -123,7 +124,7 @@ MIT © 2026 Tianrun Gu. See [LICENSE](LICENSE).
 | 项目 | 内容 |
 | --- | --- |
 | 名称 | `dsh-app-controls`（DeepSeek Harness 应用控制） |
-| 版本 | `0.4.0` |
+| 版本 | `0.4.1` |
 | 作者 | Tianrun Gu（[@MiraculousGu](https://github.com/MiraculousGu)） |
 | 适用环境 | DeepSeek Harness `0.2.2-rc.x` 的 **Web profile**（当前 `0.2.2-rc.3`）；Linux + KDE 桌面、Chrome `--app` 应用窗口；Node.js 20+ |
 | 功能 | ① **检查并更新 DSH**：确认后后台下载安装，进度弹窗显示阶段 / 百分比 / 已用时 / npm 活动日志，完成后原子切换、退出服务并自动关窗。② **退出 DSH**：确认后优雅结束整个本地 `dsh web` 服务并自动关窗。③ **KDE 系统托盘**（`tray/dsh-tray.py`）：状态、打开、检查/更新、重启、停止、日志、复制地址与通知。④ **插件设置**：托盘开关、各功能显示/隐藏，以及可记住的默认启动窗口大小。 |
@@ -159,6 +160,7 @@ MIT © 2026 Tianrun Gu. See [LICENSE](LICENSE).
 - 左键：打开/聚焦 Web 界面（服务未运行时先启动）；
 - 右键菜单：**打开**、**打开插件管理**、**插件设置**、**检查更新 / 更新到 vX**、**重启服务**、**停止服务**（打开中的页面会自行关闭窗口）、**打开日志**、**复制访问地址**、**退出托盘**；
 - 通知：更新可用/完成、服务停止、启动失败；
+- 登录时如果 Plasma 面板/系统托盘尚未就绪，会等待并自动把图标固定到面板显示项，不会被 KDE 收进折叠区。
 - 托盘通过 `~/.local/state/dsh-app-controls/control.sock`（权限 0600）与宿主通信，不保存浏览器 token/cookie。
 
 前置条件：Python 3 + PyQt5（Arch/CachyOS 上是 `python3-pyqt5`）、KDE Plasma 会话（`xembedsniproxy` 属于默认 Plasma 6 会话）。启动：`python3 tray/dsh-tray.py`；诊断：`python3 tray/dsh-tray.py --check`；开机自启可在托盘菜单里切换。
