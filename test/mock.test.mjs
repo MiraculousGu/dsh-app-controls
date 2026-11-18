@@ -101,7 +101,7 @@ if (fs.existsSync(runtimeBin)) {
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
   assert.equal(pkg.name, 'dsh-app-controls')
-  assert.equal(pkg.version, '0.5.1')
+  assert.equal(pkg.version, '0.5.2')
   assert.equal(pkg.author.name, 'Tianrun Gu')
   assert.match(pkg.author.email, /MiraculousGu@users\.noreply\.github\.com$/u)
   assert.ok(pkg.description.includes('DeepSeek Harness'))

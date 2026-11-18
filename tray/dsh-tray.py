@@ -17,10 +17,12 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from PyQt5.QtCore import QLineF, QObject, QPointF, QRectF, QTimer, QUrl, Qt
 from PyQt5.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QPen, QPixmap
@@ -46,6 +48,8 @@ THEME_INTERVAL_MS = 3000
 REQUEST_TIMEOUT_MS = 4000
 CHECK_TIMEOUT_MS = 30000
 START_TIMEOUT_SECONDS = 45
+RESTART_POLL_MS = 250
+RESTART_TIMEOUT_SECONDS = 30
 DSH_PATCH = HOME / ".dsh/profiles/web/cordis.patch.yml"
 
 _STATE_COLORS = {
@@ -191,6 +195,8 @@ class Tray(QSystemTrayIcon):
         self.starting = False
         self.start_deadline = 0.0
         self.restart_pending = False
+        self.restart_waiting = False
+        self.restart_deadline = 0.0
         self.tray_update = False
         self.suppress_stop_notice = False
         self.last_job_finished = None
@@ -567,8 +573,7 @@ class Tray(QSystemTrayIcon):
         self.suppress_stop_notice = False
         self._apply_state("stopped")
         if self.restart_pending:
-            self.restart_pending = False
-            self.launch()
+            self._begin_restart_wait()
         self._refresh_menu()
 
     # ── actions ─────────────────────────────────────────────────────────────
@@ -638,6 +643,46 @@ class Tray(QSystemTrayIcon):
         except Exception as error:
             self._notify("无法打开窗口", str(error))
 
+    def _service_port_open(self) -> bool:
+        """Whether the Web service's TCP port is still accepting connections."""
+        parts = urlsplit(URL)
+        host = parts.hostname or "127.0.0.1"
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        try:
+            with socket.create_connection((host, port), timeout=0.2):
+                return True
+        except OSError:
+            return False
+
+    def _begin_restart_wait(self) -> None:
+        if self.restart_waiting or not self.restart_pending:
+            return
+        self.restart_waiting = True
+        self.restart_deadline = time.time() + RESTART_TIMEOUT_SECONDS
+        log("restart: waiting for the old service to release the port")
+        QTimer.singleShot(RESTART_POLL_MS, self._restart_tick)
+
+    def _restart_tick(self) -> None:
+        if not self.restart_waiting:
+            return
+        if not self.restart_pending:
+            self.restart_waiting = False
+            return
+        if not self._service_port_open():
+            self.restart_waiting = False
+            self.restart_pending = False
+            log("restart: old service stopped; launching a new one")
+            self.launch()
+            return
+        if time.time() >= self.restart_deadline:
+            self.restart_waiting = False
+            self.restart_pending = False
+            log("restart: timed out waiting for the old service to stop")
+            self._notify("重启失败", "旧服务没有及时退出，请查看日志后重试。")
+            self._apply_state("stopped")
+            return
+        QTimer.singleShot(RESTART_POLL_MS, self._restart_tick)
+
     def stop_dsh(self) -> None:
         if self.status is None:
             return
@@ -652,12 +697,16 @@ class Tray(QSystemTrayIcon):
             return
         self.suppress_stop_notice = True
         self.restart_pending = False
+        self.restart_waiting = False
         self._apply_state("stopping")
         self._request({"command": "quit"}, self._on_quit_response)
 
     def restart_dsh(self) -> None:
         if self.status is None:
-            self.launch()
+            if not self.restart_waiting:
+                self.launch()
+            return
+        if self.restart_waiting:
             return
         self.suppress_stop_notice = True
         self.restart_pending = True
@@ -665,8 +714,15 @@ class Tray(QSystemTrayIcon):
         self._request({"command": "quit"}, self._on_quit_response)
 
     def _on_quit_response(self, response: dict) -> None:
-        if not response.get("ok"):
-            self._notify("停止失败", response.get("message") or response.get("error") or "未知错误")
+        if response.get("ok"):
+            return
+        message = response.get("message") or response.get("error") or "未知错误"
+        self.restart_waiting = False
+        if self.restart_pending:
+            self.restart_pending = False
+            self._notify("重启失败", message)
+        else:
+            self._notify("停止失败", message)
 
     def on_update_action(self) -> None:
         if self.job and self.job.get("active"):
