@@ -101,7 +101,7 @@ if (fs.existsSync(runtimeBin)) {
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
   assert.equal(pkg.name, 'dsh-app-controls')
-  assert.equal(pkg.version, '0.4.1')
+  assert.equal(pkg.version, '0.5.0')
   assert.equal(pkg.author.name, 'Tianrun Gu')
   assert.match(pkg.author.email, /MiraculousGu@users\.noreply\.github\.com$/u)
   assert.ok(pkg.description.includes('DeepSeek Harness'))
@@ -138,6 +138,62 @@ assert.equal(status.updateAvailable, update.compareVersions(status.candidate, st
 assert.ok(['latest', 'next', 'published'].includes(status.channel))
 ok('checkUpdates', `current=${status.current} candidate=${status.candidate} channel=${status.channel}`)
 
+// ── cache inventory and safe cleanup (isolated temp roots) ─────────────────
+{
+  const cache = await import(path.join(root, 'lib/cache.js'))
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-app-controls-cache-'))
+  try {
+    const dshHome = path.join(tmpRoot, '.dsh')
+    const npmDir = path.join(tmpRoot, '.npm')
+    const localShare = path.join(tmpRoot, '.local', 'share')
+    const attachments = path.join(dshHome, 'cache', 'attachments')
+    const npxEntry = path.join(npmDir, '_npx', 'test-hash')
+    const backup = path.join(localShare, 'dsh-runtime.backup-old')
+    fs.mkdirSync(attachments, { recursive: true })
+    fs.mkdirSync(path.join(npxEntry, 'node_modules', 'pkg'), { recursive: true })
+    fs.mkdirSync(backup, { recursive: true })
+    fs.writeFileSync(path.join(attachments, 'image.png'), Buffer.alloc(2048))
+    fs.writeFileSync(path.join(npxEntry, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1\n')
+    fs.writeFileSync(path.join(backup, 'file'), 'old runtime backup\n')
+    const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000)
+    fs.utimesSync(backup, old, old)
+    const options = {
+      home: tmpRoot,
+      dshHome,
+      npmDir,
+      localShare,
+      pnpmStore: path.join(tmpRoot, 'pnpm-store'),
+      pnpmCommand: path.join(tmpRoot, 'missing-pnpm'),
+    }
+    const inventory = await cache.scanCache(options)
+    assert.deepEqual(inventory.categories.map((entry) => entry.id), ['app', 'npx', 'npm', 'pnpm', 'backups'])
+    assert.ok(inventory.categories.find((entry) => entry.id === 'app').sizeBytes > 0)
+    assert.ok(inventory.categories.find((entry) => entry.id === 'backups').sizeBytes > 0)
+    const busy = cache.packageManagerBusy()
+    const savedArgv1 = process.argv[1]
+    process.argv[1] = path.join(npxEntry, 'node_modules', '.bin', 'dsh')
+    const protectedInventory = await cache.scanCache(options)
+    process.argv[1] = savedArgv1
+    const protectedNpx = protectedInventory.categories.find((entry) => entry.id === 'npx')
+    assert.equal(protectedNpx.available, false, 'active npx hash must be protected')
+    const npxCategory = inventory.categories.find((entry) => entry.id === 'npx')
+    if (busy) assert.equal(npxCategory.available, false)
+    else assert.ok(npxCategory.sizeBytes > 0)
+    const selected = ['app', 'backups']
+    if (!busy) selected.push('npx')
+    const cleaned = await cache.cleanCache(selected, options)
+    assert.ok(cleaned.freedBytes > 0)
+    assert.equal(fs.existsSync(path.join(attachments, 'image.png')), false)
+    assert.equal(fs.existsSync(backup), false)
+    if (!busy) assert.equal(fs.existsSync(npxEntry), false)
+    assert.equal(fs.existsSync(attachments), true, 'the cache directory itself must remain')
+    await assert.rejects(() => cache.cleanCache(['unknown'], options), /无效的缓存类型/u)
+    ok('cache inventory + safe cleanup in temp roots')
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true })
+  }
+}
+
 // ── host plugin routes with a mocked Cordis context ────────────────────────
 const { apply } = await import(path.join(root, 'lib/index.js'))
 const routes = []
@@ -158,22 +214,28 @@ const hostCtx = {
   effect() {},
 }
 apply(hostCtx)
-assert.equal(routes.length, 5)
+assert.equal(routes.length, 7)
 const quitRoute = routes.find((route) => route.path === '/api/dsh-app-controls/quit')
 const updateRoute = routes.find((route) => route.path === '/api/dsh-app-controls/update')
 const progressRoute = routes.find((route) => route.path === '/api/dsh-app-controls/update-progress')
 const stateRoute = routes.find((route) => route.path === '/api/dsh-app-controls/state')
 const settingsRoute = routes.find((route) => route.path === '/api/dsh-app-controls/settings')
+const cacheRoute = routes.find((route) => route.path === '/api/dsh-app-controls/cache')
+const cacheCleanRoute = routes.find((route) => route.path === '/api/dsh-app-controls/cache/clean')
 assert.ok(quitRoute)
 assert.ok(updateRoute)
 assert.ok(progressRoute)
 assert.ok(stateRoute)
 assert.ok(settingsRoute)
+assert.ok(cacheRoute)
+assert.ok(cacheCleanRoute)
 assert.deepEqual(quitRoute.methods, ['POST'])
 assert.deepEqual(updateRoute.methods, ['GET', 'POST'])
 assert.deepEqual(progressRoute.methods, ['GET'])
 assert.deepEqual(stateRoute.methods, ['GET'])
 assert.deepEqual(settingsRoute.methods, ['GET', 'POST'])
+assert.deepEqual(cacheRoute.methods, ['GET'])
+assert.deepEqual(cacheCleanRoute.methods, ['POST'])
 ok('routes registered')
 
 const stateResponse = await stateRoute.fetch(
@@ -197,6 +259,27 @@ assert.equal(typeof settingsBody.settings.trayEnabled, 'boolean')
 assert.equal(typeof settingsBody.settings.features.updateButton, 'boolean')
 assert.equal(typeof settingsBody.settings.window.width, 'number')
 ok('GET settings route')
+
+const cacheResponse = await cacheRoute.fetch(
+  new Request('http://127.0.0.1:3080/api/dsh-app-controls/cache', { method: 'GET' }),
+)
+const cacheBody = await cacheResponse.json()
+assert.equal(cacheResponse.status, 200)
+assert.equal(cacheBody.ok, true)
+assert.equal(Array.isArray(cacheBody.categories), true)
+assert.deepEqual(cacheBody.categories.map((entry) => entry.id), ['app', 'npx', 'npm', 'pnpm', 'backups'])
+ok('GET cache inventory')
+
+const emptyClean = await cacheCleanRoute.fetch(
+  new Request('http://127.0.0.1:3080/api/dsh-app-controls/cache/clean', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ categories: [] }),
+  }),
+)
+assert.equal(emptyClean.status, 400)
+assert.equal((await emptyClean.json()).error, 'invalid-categories')
+ok('POST cache clean rejects empty selection')
 
 const idleProgress = await progressRoute.fetch(
   new Request('http://127.0.0.1:3080/api/dsh-app-controls/update-progress', { method: 'GET' }),

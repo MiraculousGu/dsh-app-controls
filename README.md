@@ -4,17 +4,17 @@
 
 # dsh-app-controls
 
-Adds two controls to the DeepSeek Harness (DSH) Web GUI: **quit the local `dsh web` service** and **check / update DSH**. The update flow installs a newer version through a staging copy and an atomic swap, shows a progress dialog, then exits the service and closes the window.
+Adds two controls to the DeepSeek Harness (DSH) Web GUI: **quit the local `dsh web` service** and **check / update DSH**, plus a settings panel with optional **safe cache cleanup**. The update flow installs a newer version through a staging copy and an atomic swap, shows a progress dialog, then exits the service and closes the window.
 
 ## Plugin information
 
 | Field | Value |
 | --- | --- |
 | Name | `dsh-app-controls` (DeepSeek Harness app controls) |
-| Version | `0.4.1` |
+| Version | `0.5.0` |
 | Author | Tianrun Gu ([@MiraculousGu](https://github.com/MiraculousGu)) |
-| Environment | DeepSeek Harness `0.2.2-rc.x` **Web profile** (currently `0.2.2-rc.3`); Linux + KDE desktop, Chrome `--app` window; Node.js 20+ |
-| Features | ① **Check and update DSH**: confirm, download/install in the background, progress dialog with phase / percent / elapsed time / npm activity, atomic swap, exit and close the window. ② **Quit DSH**: confirm, gracefully stop the whole local `dsh web` service, and close the window. ③ **KDE system tray** (`tray/dsh-tray.py`): status, open, check/update, restart, stop, logs, copy URL and notifications. ④ **Plugin settings**: tray on/off, per-feature visibility and a remembered default window size. |
+| Environment | DeepSeek Harness `0.2.2-rc.x` **Web profile** (currently `0.2.2-rc.4`); Linux + KDE desktop, Chrome `--app` window; Node.js 20+ |
+| Features | ① **Check and update DSH**: confirm, download/install in the background, progress dialog with phase / percent / elapsed time / npm activity, atomic swap, exit and close the window. ② **Quit DSH**: confirm, gracefully stop the whole local `dsh web` service, and close the window. ③ **KDE system tray** (`tray/dsh-tray.py`): status, open, check/update, restart, stop, logs, copy URL and notifications. ④ **Plugin settings**: tray on/off, per-feature visibility, a remembered default window size and **safe cache cleanup**. |
 | Repository | https://github.com/MiraculousGu/dsh-app-controls |
 | License | MIT |
 
@@ -71,6 +71,18 @@ Open **Plugins → DeepSeek Harness 应用控制** and use the settings section 
 
 Settings live in `~/.local/state/dsh-app-controls/settings.json` and are shared by the host, tray and launcher. Tray enable/disable and the window size are applied on the next DSH start/window launch; button visibility changes immediately. The launcher uses a dedicated Chrome profile (`~/.local/share/dsh-web-chrome`) so the saved `--window-size` is reliably applied; DSH authentication is still seeded by the launch token.
 
+### Cache cleanup
+
+Open the same settings section and use **Cache cleanup** (`GET /api/dsh-app-controls/cache` to scan, `POST /api/dsh-app-controls/cache/clean` to clean). Each category is optional:
+
+- **Application cache** — DSH attachment-image cache (`~/.dsh/cache/attachments`); safe to rebuild.
+- **npx install cache** — obsolete temporary installs under `~/.npm/_npx`; the version currently running is detected and kept.
+- **npm download cache** — `~/.npm/_cacache`; packages are re-downloaded when needed.
+- **Uninstalled-plugin cache** — `pnpm store prune`; removes store packages no project references, without touching installed plugins.
+- **Update leftovers** — runtime backups/staging directories older than 7 days.
+
+Only regenerable caches are removed. The running DSH installation, plugin source, installed plugins, settings, sessions, credentials and browser cookies/local storage are never targets. Package-cache cleanup is refused while npm/pnpm/npx is running, and cache cleanup is refused during an update. A category that fails or is in use is skipped without aborting the others.
+
 ## Install
 
 ```sh
@@ -94,6 +106,7 @@ dsh plugin --profile web remove dsh-app-controls
 - Quitting or updating interrupts every open session and any in-flight agent turn; persisted session history is kept.
 - The update targets the installation root of the running process. This project's desktop launcher uses the stable directory `~/.local/share/dsh-runtime`, so updates are not reverted by npx's `latest`-tag resolution.
 - The main-interface overlay is hidden automatically whenever the conversation-header controls are mounted (CSS `:has()`).
+- Cache cleanup only touches the paths listed above; active npx installs, installed plugins and user data are excluded. Package-cache categories are blocked while a package manager is running.
 
 ## Development and tests
 
@@ -117,17 +130,17 @@ MIT © 2026 Tianrun Gu. See [LICENSE](LICENSE).
 
 # 中文说明
 
-为 DeepSeek Harness（DSH）Web 界面增加两个控制：「**退出本地 `dsh web` 服务**」和「**检查并更新 DSH**」。更新通过副本安装 + 原子切换完成，带进度弹窗，完成后退出服务并自动关窗。
+为 DeepSeek Harness（DSH）Web 界面增加两个控制：「**退出本地 `dsh web` 服务**」和「**检查并更新 DSH**」，并提供包含可选**安全缓存清理**的设置面板。更新通过副本安装 + 原子切换完成，带进度弹窗，完成后退出服务并自动关窗。
 
 ## 插件信息
 
 | 项目 | 内容 |
 | --- | --- |
 | 名称 | `dsh-app-controls`（DeepSeek Harness 应用控制） |
-| 版本 | `0.4.1` |
+| 版本 | `0.5.0` |
 | 作者 | Tianrun Gu（[@MiraculousGu](https://github.com/MiraculousGu)） |
-| 适用环境 | DeepSeek Harness `0.2.2-rc.x` 的 **Web profile**（当前 `0.2.2-rc.3`）；Linux + KDE 桌面、Chrome `--app` 应用窗口；Node.js 20+ |
-| 功能 | ① **检查并更新 DSH**：确认后后台下载安装，进度弹窗显示阶段 / 百分比 / 已用时 / npm 活动日志，完成后原子切换、退出服务并自动关窗。② **退出 DSH**：确认后优雅结束整个本地 `dsh web` 服务并自动关窗。③ **KDE 系统托盘**（`tray/dsh-tray.py`）：状态、打开、检查/更新、重启、停止、日志、复制地址与通知。④ **插件设置**：托盘开关、各功能显示/隐藏，以及可记住的默认启动窗口大小。 |
+| 适用环境 | DeepSeek Harness `0.2.2-rc.x` 的 **Web profile**（当前 `0.2.2-rc.4`）；Linux + KDE 桌面、Chrome `--app` 应用窗口；Node.js 20+ |
+| 功能 | ① **检查并更新 DSH**：确认后后台下载安装，进度弹窗显示阶段 / 百分比 / 已用时 / npm 活动日志，完成后原子切换、退出服务并自动关窗。② **退出 DSH**：确认后优雅结束整个本地 `dsh web` 服务并自动关窗。③ **KDE 系统托盘**（`tray/dsh-tray.py`）：状态、打开、检查/更新、重启、停止、日志、复制地址与通知。④ **插件设置**：托盘开关、各功能显示/隐藏、可记住的默认启动窗口大小，以及**安全缓存清理**。 |
 | 仓库 | https://github.com/MiraculousGu/dsh-app-controls |
 | 许可证 | MIT |
 
@@ -175,6 +188,18 @@ MIT © 2026 Tianrun Gu. See [LICENSE](LICENSE).
 
 设置保存在 `~/.local/state/dsh-app-controls/settings.json`，由宿主、托盘和启动器共享。托盘开关与窗口大小在下次启动 DSH / 打开窗口时生效，按钮显示/隐藏立即生效。启动器使用独立的 Chrome 配置目录（`~/.local/share/dsh-web-chrome`），确保保存的 `--window-size` 可靠生效；DSH 鉴权仍通过启动令牌完成。
 
+### 缓存清理
+
+在同一设置区使用 **缓存清理**（扫描：`GET /api/dsh-app-controls/cache`；清理：`POST /api/dsh-app-controls/cache/clean`）。各类型可单独选择：
+
+- **应用缓存**：DSH 附件图片缓存（`~/.dsh/cache/attachments`），可安全重建；
+- **npx 安装缓存**：`~/.npm/_npx` 中旧的临时安装，会自动识别并保留当前正在运行的版本；
+- **npm 下载缓存**：`~/.npm/_cacache`，需要时会重新下载；
+- **卸载插件的缓存**：执行 `pnpm store prune`，只移除没有任何项目引用的 store 包，不动已安装插件；
+- **更新残留**：7 天前的运行时备份 / 临时副本。
+
+只删除可重新生成的缓存；运行中的 DSH、插件源码、已安装插件、设置、会话、凭据以及浏览器 Cookie / Local Storage 均不会被删除。npm/pnpm/npx 运行时拒绝清理包缓存，更新进行中拒绝清理；单项失败或被占用时跳过，不影响其他项。
+
 ## 安装
 
 ```sh
@@ -198,6 +223,7 @@ dsh plugin --profile web remove dsh-app-controls
 - 退出或更新会中断所有会话与正在生成的回合；会话历史已持久化。
 - 更新目标为当前进程所在的安装根目录。本项目的桌面启动器使用稳定目录 `~/.local/share/dsh-runtime`，因此不会被 npx 的 `latest` 标签校验回退。
 - 当会话标题栏控件挂载时，主界面右上角的悬浮控件会通过 CSS `:has()` 自动隐藏。
+- 缓存清理只处理上面列出的路径；运行中的 npx 安装、已安装插件和用户数据不在清理范围内。包管理器运行时会拒绝清理包缓存。
 
 ## 开发与测试
 

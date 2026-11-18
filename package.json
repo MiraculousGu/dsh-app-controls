@@ -1,7 +1,7 @@
 {
   "name": "dsh-app-controls",
-  "version": "0.4.1",
-  "description": "DeepSeek Harness Web GUI controls and KDE tray icon, with per-feature settings and a remembered default window size.",
+  "version": "0.5.0",
+  "description": "DeepSeek Harness Web GUI controls, KDE tray icon, per-feature settings, remembered window size, and safe cache cleanup.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
