@@ -16,7 +16,7 @@
     "cordis.patch.yml",
     "locale",
     "icon.svg",
-    "tray"
+    "tray/dsh-tray.py"
   ],
   "icon": "./icon.svg",
   "author": {
@@ -40,7 +40,15 @@
     "web-gui",
     "toolbar",
     "quit",
-    "update"
+    "update",
+    "dsh-plugin",
+    "deepseek",
+    "kde",
+    "system-tray",
+    "cache",
+    "cache-cleanup",
+    "settings",
+    "updater"
   ],
   "engines": {
     "node": ">=20",

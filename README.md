@@ -87,7 +87,10 @@ Only regenerable caches are removed. The running DSH installation, plugin source
 ## Install
 
 ```sh
-# From a local directory (link: install)
+# From npm (recommended)
+dsh plugin --profile web add dsh-app-controls
+
+# From a local checkout (link: install)
 dsh plugin --profile web add /path/to/dsh-app-controls
 
 # Or from GitHub (git spec, when supported)
@@ -205,6 +208,9 @@ MIT © 2026 Tianrun Gu. See [LICENSE](LICENSE).
 ## 安装
 
 ```sh
+# 从 npm 安装（推荐）
+dsh plugin --profile web add dsh-app-controls
+
 # 本地目录安装（link: 方式）
 dsh plugin --profile web add /path/to/dsh-app-controls
 
