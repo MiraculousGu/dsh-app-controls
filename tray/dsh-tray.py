@@ -15,14 +15,15 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-from PyQt5.QtCore import QObject, QTimer, QUrl, Qt
-from PyQt5.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPen, QPixmap
+from PyQt5.QtCore import QLineF, QObject, QPointF, QRectF, QTimer, QUrl, Qt
+from PyQt5.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QPen, QPixmap
 from PyQt5.QtNetwork import QLocalSocket
 from PyQt5.QtWidgets import QAction, QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
@@ -41,9 +42,11 @@ ICON_SVG = PLUGIN_DIR / "icon.svg"
 
 STATUS_INTERVAL_MS = 2000
 UPDATE_INTERVAL_MS = 30 * 60 * 1000
+THEME_INTERVAL_MS = 3000
 REQUEST_TIMEOUT_MS = 4000
 CHECK_TIMEOUT_MS = 30000
 START_TIMEOUT_SECONDS = 45
+DSH_PATCH = HOME / ".dsh/profiles/web/cordis.patch.yml"
 
 _STATE_COLORS = {
     "running": "#3fae63",
@@ -62,6 +65,41 @@ def log(message: str) -> None:
             handle.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
     except Exception:
         pass
+
+
+def dsh_theme_preference() -> str:
+    """Read the DSH Web profile's theme preference without requiring PyYAML."""
+    try:
+        text = DSH_PATCH.read_text(encoding="utf-8")
+    except Exception:
+        return "system"
+
+    # The preference lives in the `ui-theme` loader entry in the profile patch.
+    # A YAML parser is preferred, but the patch may contain loader tags that a
+    # plain safe_load rejects, so fall back to a narrow block scan.
+    try:
+        import yaml  # type: ignore
+
+        document = yaml.safe_load(text)
+        for item in document if isinstance(document, list) else []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "")
+            if item.get("id") != "ui-theme" and not name.endswith("dsh-client-ui-theme"):
+                continue
+            config = item.get("config")
+            preference = config.get("preference") if isinstance(config, dict) else None
+            if preference in ("light", "dark", "system"):
+                return str(preference)
+    except Exception:
+        pass
+
+    block = re.search(r"(?ms)^\s*-\s*id:\s*['\"]?ui-theme['\"]?\s*$.*?(?=^\s*-\s*id:|\Z)", text)
+    if block:
+        preference = re.search(r"(?m)^\s+preference:\s*['\"]?(light|dark|system)['\"]?\s*$", block.group(0))
+        if preference:
+            return preference.group(1)
+    return "system"
 
 
 def probe_status(timeout: float = 2.0) -> dict:
@@ -159,9 +197,19 @@ class Tray(QSystemTrayIcon):
         self.last_notified_update = None
         self.requests = set()
         self._request_id = 0
+        self.state = "stopped"
+        self.dark = False
+        self._theme_key = None
+        self._theme_pref = None
+        self.check_result = None
+        self.check_result_deadline = 0.0
 
+        self.dark = self._resolve_dark()
         self.menu = QMenu()
+        self.menu.setToolTipsVisible(True)
+        self.menu.setMinimumWidth(272)
         self._build_menu()
+        self._apply_theme(force=True)
         self.setContextMenu(self.menu)
         self.activated.connect(self._on_activated)
         self._apply_state("stopped")
@@ -173,12 +221,185 @@ class Tray(QSystemTrayIcon):
         self.poll_timer.timeout.connect(self.poll)
         self.poll_timer.start(STATUS_INTERVAL_MS)
         self.check_timer = QTimer(self)
-        self.check_timer.timeout.connect(lambda: self.request_check(notify=True))
+        self.check_timer.timeout.connect(lambda: self.request_check(mode="auto"))
         self.check_timer.start(UPDATE_INTERVAL_MS)
+        self.theme_timer = QTimer(self)
+        self.theme_timer.timeout.connect(self._sync_theme)
+        self.theme_timer.start(THEME_INTERVAL_MS)
         QTimer.singleShot(400, self.poll)
-        QTimer.singleShot(1800, lambda: self.request_check(notify=False))
+        QTimer.singleShot(1800, lambda: self.request_check(mode="auto"))
 
-    # ── menu ────────────────────────────────────────────────────────────────
+    # ── theme and menu ──────────────────────────────────────────────────────
+    def _resolve_dark(self) -> bool:
+        try:
+            preference = dsh_theme_preference()
+        except Exception:
+            preference = "system"
+        self._theme_pref = preference
+        if preference == "dark":
+            return True
+        if preference == "light":
+            return False
+        return self.app.palette().color(QPalette.Window).lightness() < 128
+
+    def _colors(self) -> dict[str, str]:
+        if self.dark:
+            return {
+                "bg": "#24262d",
+                "text": "#f2f3f5",
+                "muted": "#969ba6",
+                "border": "#3a3e47",
+                "hover": "#343842",
+                "accent": "#6d8cff",
+                "danger": "#ff8181",
+            }
+        return {
+            "bg": "#ffffff",
+            "text": "#20242c",
+            "muted": "#777d88",
+            "border": "#e1e4ea",
+            "hover": "#f0f3f8",
+            "accent": "#4d6bfe",
+            "danger": "#cf4d4d",
+        }
+
+    def _menu_style(self) -> str:
+        c = self._colors()
+        return f"""
+        QMenu {{
+            background-color: {c['bg']};
+            color: {c['text']};
+            border: 1px solid {c['border']};
+            border-radius: 10px;
+            padding: 6px;
+        }}
+        QMenu::item {{
+            padding: 8px 22px 8px 10px;
+            margin: 1px 2px;
+            border-radius: 6px;
+            color: {c['text']};
+            background: transparent;
+        }}
+        QMenu::item:selected {{
+            background-color: {c['hover']};
+            color: {c['text']};
+        }}
+        QMenu::item:disabled {{
+            color: {c['muted']};
+            background: transparent;
+        }}
+        QMenu::separator {{
+            height: 1px;
+            background: {c['border']};
+            margin: 5px 8px;
+        }}
+        """
+
+    def _apply_theme(self, force: bool = False) -> None:
+        try:
+            preference = dsh_theme_preference()
+            base = self.app.palette().color(QPalette.Window)
+            dark = True if preference == "dark" else False if preference == "light" else base.lightness() < 128
+            key = (preference, dark, base.name())
+            if not force and key == self._theme_key:
+                return
+            self._theme_pref = preference
+            self.dark = dark
+            self._theme_key = key
+            self.menu.setStyleSheet(self._menu_style())
+            self._apply_action_icons()
+            self._refresh_menu()
+            log(f"tray theme: {preference} ({'dark' if dark else 'light'})")
+        except Exception as error:
+            log(f"could not apply tray theme: {error}")
+
+    def _sync_theme(self) -> None:
+        self._apply_theme()
+
+    def _menu_icon(self, kind: str, color: str | None = None) -> QIcon:
+        c = QColor(color or self._colors()["text"])
+        size = 18
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(c, 1.7, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+
+        if kind == "open":
+            painter.drawRoundedRect(QRectF(2.5, 3.5, 13, 11), 2, 2)
+            painter.drawLine(QLineF(2.5, 7, 15.5, 7))
+            painter.setBrush(c)
+            painter.drawEllipse(QPointF(4.8, 5.2), 0.7, 0.7)
+        elif kind == "plugins":
+            for x, y in ((3, 3), (10, 3), (3, 10), (10, 10)):
+                painter.drawRoundedRect(QRectF(x, y, 5, 5), 1.5, 1.5)
+        elif kind == "settings":
+            for y, knob in ((5, 6), (9, 12), (13, 8)):
+                painter.drawLine(3, y, 15, y)
+                painter.setBrush(c)
+                painter.drawEllipse(QPointF(knob, y), 1.6, 1.6)
+        elif kind in ("update", "restart"):
+            painter.drawArc(3, 3, 12, 12, 45 * 16, 270 * 16)
+            painter.drawLine(13, 3, 15, 6)
+            painter.drawLine(15, 6, 11, 6)
+            if kind == "restart":
+                painter.setBrush(c)
+                painter.drawEllipse(8, 8, 2, 2)
+        elif kind == "stop":
+            painter.setBrush(c)
+            painter.drawRoundedRect(QRectF(4, 4, 10, 10), 2, 2)
+        elif kind == "logs":
+            painter.drawRoundedRect(QRectF(3, 2.5, 12, 13), 2, 2)
+            for y in (6, 9, 12):
+                painter.drawLine(6, y, 12, y)
+        elif kind == "copy":
+            painter.drawRoundedRect(QRectF(5, 3, 9, 11), 1.5, 1.5)
+            painter.drawRoundedRect(QRectF(3, 6, 9, 11), 1.5, 1.5)
+        elif kind == "quit":
+            painter.drawArc(3, 3, 12, 12, 45 * 16, 270 * 16)
+            painter.drawLine(9, 2, 9, 9)
+        painter.end()
+        icon = QIcon()
+        icon.addPixmap(pixmap, QIcon.Normal)
+        icon.addPixmap(pixmap, QIcon.Active)
+        icon.addPixmap(pixmap, QIcon.Disabled)
+        return icon
+
+    def _apply_action_icons(self) -> None:
+        c = self._colors()
+        self.open_action.setIcon(self._menu_icon("open", c["accent"]))
+        self.plugins_action.setIcon(self._menu_icon("plugins", c["text"]))
+        self.settings_action.setIcon(self._menu_icon("settings", c["text"]))
+        self.update_action.setIcon(self._menu_icon("update", c["accent"]))
+        self.restart_action.setIcon(self._menu_icon("restart", c["text"]))
+        self.stop_action.setIcon(self._menu_icon("stop", c["danger"]))
+        self.logs_action.setIcon(self._menu_icon("logs", c["text"]))
+        self.copy_action.setIcon(self._menu_icon("copy", c["text"]))
+        self.quit_action.setIcon(self._menu_icon("quit", c["danger"]))
+        self.status_action.setIcon(self._status_icon())
+
+    def _status_icon(self) -> QIcon:
+        color = QColor(_STATE_COLORS.get(self.state, _STATE_COLORS["running"]))
+        size = 18
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(color, 1.2))
+        painter.setBrush(QColor(color.red(), color.green(), color.blue(), 55))
+        painter.drawEllipse(QRectF(3, 3, 12, 12))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(color)
+        painter.drawEllipse(QPointF(9, 9), 2.5, 2.5)
+        painter.end()
+        icon = QIcon()
+        icon.addPixmap(pixmap, QIcon.Normal)
+        icon.addPixmap(pixmap, QIcon.Active)
+        icon.addPixmap(pixmap, QIcon.Disabled)
+        return icon
+
     def _build_menu(self) -> None:
         self.open_action = QAction("打开 DeepSeek Harness", self)
         self.open_action.triggered.connect(self.open_dsh)
@@ -244,29 +465,47 @@ class Tray(QSystemTrayIcon):
         self.polling = True
         self._request({"command": "status"}, self._on_status, timeout_ms=3000)
 
-    def request_check(self, notify: bool) -> None:
+    def request_check(self, mode: str = "auto") -> None:
+        """Check in the background; only an available update raises a notification."""
         if self.checking:
             return
         self.checking = True
+        self.check_result = None
+        self.check_result_deadline = 0.0
         self._refresh_menu()
 
         def done(response: dict) -> None:
             self.checking = False
             if response.get("ok") and response.get("update"):
                 self.update = response["update"]
-                if notify:
-                    if self.update.get("updateAvailable"):
+                if self.update.get("updateAvailable"):
+                    candidate = self.update.get("candidate")
+                    if candidate != self.last_notified_update:
+                        self.last_notified_update = candidate
                         self._notify(
                             "有可用更新",
-                            f"DeepSeek Harness {self.update.get('candidate')}（当前 {self.update.get('current')}）",
+                            f"DeepSeek Harness {candidate}（当前 {self.update.get('current')}）",
                         )
-                    else:
-                        self._notify("已是最新版本", f"DeepSeek Harness {self.update.get('current')}")
-            elif notify:
-                self._notify("检查更新失败", response.get("message") or response.get("error") or "无法连接服务")
+                elif mode == "manual":
+                    self._set_check_result("已是最新版本")
+            elif mode == "manual":
+                self._set_check_result("检查失败")
             self._refresh_menu()
 
         self._request({"command": "check-update"}, done, timeout_ms=CHECK_TIMEOUT_MS)
+
+    def _set_check_result(self, text: str) -> None:
+        self.check_result = text
+        self.check_result_deadline = time.time() + 5.0
+        QTimer.singleShot(5200, self._clear_check_result)
+
+    def _clear_check_result(self) -> None:
+        if self.check_result is None:
+            return
+        if time.time() < self.check_result_deadline:
+            return
+        self.check_result = None
+        self._refresh_menu()
 
     # ── status handling ─────────────────────────────────────────────────────
     def _on_status(self, response: dict) -> None:
@@ -446,7 +685,7 @@ class Tray(QSystemTrayIcon):
             self.tray_update = True
             self._request({"command": "update"}, self._on_update_start, timeout_ms=CHECK_TIMEOUT_MS)
         else:
-            self.request_check(notify=True)
+            self.request_check(mode="manual")
 
     def _on_update_start(self, response: dict) -> None:
         if not response.get("ok"):
@@ -525,8 +764,10 @@ for (var pi = 0; pi < ps.length; pi++) {
 
     # ── presentation ────────────────────────────────────────────────────────
     def _apply_state(self, state: str) -> None:
+        self.state = state
         self.setIcon(self._make_icon(state))
         self.setToolTip(self._tooltip(state))
+        self._refresh_menu()
 
     def _make_icon(self, state: str) -> QIcon:
         pixmap = QPixmap(64, 64)
@@ -600,10 +841,14 @@ for (var pi = 0; pi < ps.length; pi++) {
         elif isinstance(self.update, dict) and self.update.get("updateAvailable"):
             self.update_action.setText(f"更新到 {self.update.get('candidate')}")
             self.update_action.setEnabled(True)
+        elif self.check_result:
+            self.update_action.setText(self.check_result)
+            self.update_action.setEnabled(False)
         else:
             self.update_action.setText("检查更新")
             self.update_action.setEnabled(True)
 
+        self.status_action.setIcon(self._status_icon())
         self.restart_action.setText("重启服务" if running else "启动服务")
         self.plugins_action.setEnabled(running)
         self.settings_action.setEnabled(running)
