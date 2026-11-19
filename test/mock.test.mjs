@@ -35,6 +35,7 @@ if (dshBin === undefined) {
 process.argv[1] = dshBin
 process.env.DSH_APP_CONTROLS_DISABLE_SOCKET = '1'
 process.env.DSH_APP_CONTROLS_DISABLE_TRAY = '1'
+process.env.DSH_APP_CONTROLS_DISABLE_AUTO_UPDATE = '1'
 
 const update = await import(path.join(root, 'lib/update.js'))
 
@@ -101,7 +102,7 @@ if (fs.existsSync(runtimeBin)) {
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
   assert.equal(pkg.name, 'dsh-app-controls')
-  assert.equal(pkg.version, '0.5.2')
+  assert.equal(pkg.version, '0.6.0')
   assert.equal(pkg.author.name, 'Tianrun Gu')
   assert.match(pkg.author.email, /MiraculousGu@users\.noreply\.github\.com$/u)
   assert.ok(pkg.description.includes('DeepSeek Harness'))
@@ -209,33 +210,49 @@ const hostCtx = {
     },
   },
   get(service) {
-    return service === 'appExit' ? (code) => exitCalls.push(code) : undefined
+    if (service === 'appExit') return (code) => exitCalls.push(code)
+    if (service === 'agents') return { list: () => [{ id: 'turn-1', status: 'running' }, { id: 'turn-2', status: 'idle' }] }
+    if (service === 'sessions') return { list: () => [{ id: 'session-1' }] }
+    if (service === 'jobs') {
+      return {
+        list: (caller) => (caller === 'session-1'
+          ? [{ id: 'job-1', status: 'running', label: 'bash' }]
+          : []),
+      }
+    }
+    return undefined
   },
   effect() {},
 }
 apply(hostCtx)
-assert.equal(routes.length, 7)
+assert.equal(routes.length, 9)
 const quitRoute = routes.find((route) => route.path === '/api/dsh-app-controls/quit')
 const updateRoute = routes.find((route) => route.path === '/api/dsh-app-controls/update')
 const progressRoute = routes.find((route) => route.path === '/api/dsh-app-controls/update-progress')
+const deferRoute = routes.find((route) => route.path === '/api/dsh-app-controls/update/defer')
 const stateRoute = routes.find((route) => route.path === '/api/dsh-app-controls/state')
 const settingsRoute = routes.find((route) => route.path === '/api/dsh-app-controls/settings')
 const cacheRoute = routes.find((route) => route.path === '/api/dsh-app-controls/cache')
 const cacheCleanRoute = routes.find((route) => route.path === '/api/dsh-app-controls/cache/clean')
+const viewHandledRoute = routes.find((route) => route.path === '/api/dsh-app-controls/view-handled')
 assert.ok(quitRoute)
 assert.ok(updateRoute)
 assert.ok(progressRoute)
+assert.ok(deferRoute)
 assert.ok(stateRoute)
 assert.ok(settingsRoute)
 assert.ok(cacheRoute)
 assert.ok(cacheCleanRoute)
+assert.ok(viewHandledRoute)
 assert.deepEqual(quitRoute.methods, ['POST'])
 assert.deepEqual(updateRoute.methods, ['GET', 'POST'])
 assert.deepEqual(progressRoute.methods, ['GET'])
+assert.deepEqual(deferRoute.methods, ['POST'])
 assert.deepEqual(stateRoute.methods, ['GET'])
 assert.deepEqual(settingsRoute.methods, ['GET', 'POST'])
 assert.deepEqual(cacheRoute.methods, ['GET'])
 assert.deepEqual(cacheCleanRoute.methods, ['POST'])
+assert.deepEqual(viewHandledRoute.methods, ['POST'])
 ok('routes registered')
 
 const stateResponse = await stateRoute.fetch(
@@ -247,6 +264,11 @@ assert.equal(stateBody.ok, true)
 assert.equal(stateBody.running, true)
 assert.equal(stateBody.quitRequested, false)
 assert.equal(stateBody.job.active, false)
+assert.equal(stateBody.activity.available, true)
+assert.equal(stateBody.activity.active, true)
+assert.equal(stateBody.activity.turns, 1)
+assert.equal(stateBody.activity.jobs, 1)
+assert.equal(stateBody.pendingView, null)
 ok('GET state route')
 
 const settingsResponse = await settingsRoute.fetch(
@@ -258,7 +280,19 @@ assert.equal(settingsBody.ok, true)
 assert.equal(typeof settingsBody.settings.trayEnabled, 'boolean')
 assert.equal(typeof settingsBody.settings.features.updateButton, 'boolean')
 assert.equal(typeof settingsBody.settings.window.width, 'number')
+assert.equal(settingsBody.settings.trayIcon.style, 'deepseek')
+assert.equal(settingsBody.settings.update.deferMinutes, 60)
 ok('GET settings route')
+
+const viewResponse = await viewHandledRoute.fetch(
+  new Request('http://127.0.0.1:3080/api/dsh-app-controls/view-handled', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'unknown' }),
+  }),
+)
+assert.equal(viewResponse.status, 200)
+ok('POST view-handled route')
 
 const cacheResponse = await cacheRoute.fetch(
   new Request('http://127.0.0.1:3080/api/dsh-app-controls/cache', { method: 'GET' }),

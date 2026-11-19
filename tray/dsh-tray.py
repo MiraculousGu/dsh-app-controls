@@ -41,6 +41,10 @@ URL = os.environ.get("DSH_WEB_URL", "http://127.0.0.1:3080/")
 AUTOSTART = HOME / ".config/autostart/dsh-tray.desktop"
 LOCK_FILE = STATE_DIR / "tray.lock"
 ICON_SVG = PLUGIN_DIR / "icon.svg"
+SETTINGS_FILE = STATE_DIR / "settings.json"
+WHALE_ASSET = PLUGIN_DIR / "assets" / "dsh-tray.png"
+TRAY_ICON_STYLES = ("deepseek", "classic", "custom")
+DEFAULT_TRAY_ICON_STYLE = "deepseek"
 
 STATUS_INTERVAL_MS = 2000
 UPDATE_INTERVAL_MS = 30 * 60 * 1000
@@ -69,6 +73,99 @@ def log(message: str) -> None:
             handle.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
     except Exception:
         pass
+
+
+def read_tray_icon_settings(path: Path | None = None) -> tuple[str, Path]:
+    """Read the tray icon choice from the shared settings file.
+
+    The settings file is owned by the host plugin, so this reader is
+    deliberately forgiving: a missing file, invalid JSON or an unknown style
+    all fall back to the DeepSeek whale.  ``custom`` with a missing or
+    unreadable image also falls back to the whale, matching the Web UI.
+    """
+    style = DEFAULT_TRAY_ICON_STYLE
+    custom = ""
+    try:
+        data = json.loads((path or SETTINGS_FILE).read_text(encoding="utf-8"))
+    except Exception:
+        return style, Path()
+    if isinstance(data, dict):
+        value = data.get("trayIcon")
+        if isinstance(value, dict):
+            candidate = value.get("style")
+            if candidate in TRAY_ICON_STYLES:
+                style = candidate
+            raw_custom = value.get("customPath")
+            if isinstance(raw_custom, str):
+                custom = raw_custom.strip()
+    if style != "custom" or not custom:
+        return (DEFAULT_TRAY_ICON_STYLE if style == "custom" else style), Path()
+    resolved = Path(os.path.expandvars(os.path.expanduser(custom)))
+    if not resolved.is_absolute():
+        resolved = HOME / resolved
+    try:
+        if not resolved.is_file() or not os.access(resolved, os.R_OK):
+            return DEFAULT_TRAY_ICON_STYLE, Path()
+    except OSError:
+        return DEFAULT_TRAY_ICON_STYLE, Path()
+    return "custom", resolved
+
+
+def read_update_defer_minutes(path: Path | None = None) -> int:
+    """Read the shared default defer duration from settings.json."""
+    try:
+        data = json.loads((path or SETTINGS_FILE).read_text(encoding="utf-8"))
+    except Exception:
+        return 60
+    value = data.get("update") if isinstance(data, dict) else None
+    minutes = value.get("deferMinutes") if isinstance(value, dict) else None
+    try:
+        number = int(minutes)
+    except (TypeError, ValueError):
+        return 60
+    return number if 5 <= number <= 7 * 24 * 60 else 60
+
+
+def find_other_tray_processes() -> list[int]:
+    """Return PIDs of other ``dsh-tray.py`` processes for this user.
+
+    ``main()`` uses this before taking the lock so a second tray (for example
+    after an update, a manual start or a login race) exits immediately instead
+    of showing duplicate icons.  Only the real script invocation counts:
+    one-shot ``python -m py_compile``/``-c`` commands and ``--check`` runs are
+    ignored, and the calling process is never reported.  The scan lives here,
+    not in ``Tray.__init__``, so offscreen tests can instantiate ``Tray``.
+    """
+    own_pid = os.getpid()
+    found: list[int] = []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return found
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        if pid == own_pid:
+            continue
+        try:
+            if os.stat(f"/proc/{pid}").st_uid != os.getuid():
+                continue
+            raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        except OSError:
+            continue
+        args = [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+        if not args:
+            continue
+        executable = Path(args[0]).name.lower()
+        if "python" not in executable:
+            continue
+        if "-m" in args or "-c" in args or "--check" in args:
+            continue
+        if any(Path(arg).name == "dsh-tray.py" for arg in args[1:]):
+            if pid not in found:
+                found.append(pid)
+    return found
 
 
 def dsh_theme_preference() -> str:
@@ -201,6 +298,8 @@ class Tray(QSystemTrayIcon):
         self.suppress_stop_notice = False
         self.last_job_finished = None
         self.last_notified_update = None
+        self.update_defer_until = 0.0
+        self.defer_notice_scheduled = False
         self.requests = set()
         self._request_id = 0
         self.state = "stopped"
@@ -209,6 +308,11 @@ class Tray(QSystemTrayIcon):
         self._theme_pref = None
         self.check_result = None
         self.check_result_deadline = 0.0
+        self.icon_style = DEFAULT_TRAY_ICON_STYLE
+        self.custom_icon_path = Path()
+        self._whale_source = None
+        self._icon_settings_key = None
+        self._custom_icon_fallback_logged = False
 
         self.dark = self._resolve_dark()
         self.menu = QMenu()
@@ -308,12 +412,15 @@ class Tray(QSystemTrayIcon):
             dark = True if preference == "dark" else False if preference == "light" else base.lightness() < 128
             key = (preference, dark, base.name())
             if not force and key == self._theme_key:
+                self._sync_icon_settings()
                 return
             self._theme_pref = preference
             self.dark = dark
             self._theme_key = key
+            self._sync_icon_settings()
             self.menu.setStyleSheet(self._menu_style())
             self._apply_action_icons()
+            self.setIcon(self._make_icon(self.state))
             self._refresh_menu()
             log(f"tray theme: {preference} ({'dark' if dark else 'light'})")
         except Exception as error:
@@ -321,6 +428,25 @@ class Tray(QSystemTrayIcon):
 
     def _sync_theme(self) -> None:
         self._apply_theme()
+
+    def _sync_icon_settings(self) -> None:
+        """Pick up trayIcon changes written by the Web settings panel."""
+        try:
+            stat = SETTINGS_FILE.stat()
+            key = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            key = None
+        if key == self._icon_settings_key:
+            return
+        self._icon_settings_key = key
+        style, custom = read_tray_icon_settings()
+        if style == self.icon_style and custom == self.custom_icon_path:
+            return
+        self.icon_style = style
+        self.custom_icon_path = custom
+        self._custom_icon_fallback_logged = False
+        self.setIcon(self._make_icon(self.state))
+        log(f"tray icon style: {style}" + (f" ({custom})" if style == "custom" else ""))
 
     def _menu_icon(self, kind: str, color: str | None = None) -> QIcon:
         c = QColor(color or self._colors()["text"])
@@ -484,14 +610,9 @@ class Tray(QSystemTrayIcon):
             self.checking = False
             if response.get("ok") and response.get("update"):
                 self.update = response["update"]
+                self._note_update_defer(self.update)
                 if self.update.get("updateAvailable"):
-                    candidate = self.update.get("candidate")
-                    if candidate != self.last_notified_update:
-                        self.last_notified_update = candidate
-                        self._notify(
-                            "有可用更新",
-                            f"DeepSeek Harness {candidate}（当前 {self.update.get('current')}）",
-                        )
+                    self._maybe_notify_update()
                 elif mode == "manual":
                     self._set_check_result("已是最新版本")
             elif mode == "manual":
@@ -513,6 +634,86 @@ class Tray(QSystemTrayIcon):
         self.check_result = None
         self._refresh_menu()
 
+    def _note_update_defer(self, value) -> None:
+        if not isinstance(value, dict):
+            return
+        until = value.get("updateDeferUntil")
+        if isinstance(until, (int, float)) and until > 0:
+            self.update_defer_until = max(self.update_defer_until, float(until))
+            # A deferral set elsewhere (for example the Web dialog) should
+            # allow a fresh notification when it expires.
+            self.last_notified_update = None
+
+    def _update_deferred(self) -> bool:
+        return self.update_defer_until > time.time()
+
+    def _defer_time_text(self) -> str:
+        if not self._update_deferred():
+            return ""
+        return time.strftime("%H:%M", time.localtime(self.update_defer_until))
+
+    def _maybe_notify_update(self) -> None:
+        if not isinstance(self.update, dict) or not self.update.get("updateAvailable"):
+            return
+        # The startup check can finish before KDE has attached the tray icon;
+        # wait for the icon to be visible so the notification is not lost.
+        if not self.isVisible():
+            QTimer.singleShot(2000, self._maybe_notify_update)
+            return
+        if self._update_deferred():
+            remain = max(1.0, self.update_defer_until - time.time())
+            if not self.defer_notice_scheduled:
+                self.defer_notice_scheduled = True
+                QTimer.singleShot(int(remain * 1000) + 500, self._on_defer_expired)
+            return
+        candidate = self.update.get("candidate")
+        if candidate == self.last_notified_update:
+            return
+        self.last_notified_update = candidate
+        self._notify(
+            "有可用更新",
+            f"DeepSeek Harness {candidate}（当前 {self.update.get('current')}）\n"
+            "右键托盘图标可立即更新，或先推迟更新。",
+        )
+
+    def _on_defer_expired(self) -> None:
+        self.defer_notice_scheduled = False
+        self.update_defer_until = 0.0
+        self._maybe_notify_update()
+        self._refresh_menu()
+
+    def _defer_update(self, minutes: int = 60) -> None:
+        def done(response: dict) -> None:
+            if not response.get("ok"):
+                self._notify("无法推迟更新", response.get("message") or response.get("error") or "未知错误")
+                return
+            until = response.get("updateDeferUntil")
+            if isinstance(until, (int, float)) and until > 0:
+                self.update_defer_until = float(until)
+            self.defer_notice_scheduled = False
+            self.last_notified_update = None
+            self._notify("已推迟更新", f"将在 {minutes} 分钟后再提醒你。")
+            self._refresh_menu()
+
+        self._request({"command": "defer-update", "minutes": minutes}, done, timeout_ms=CHECK_TIMEOUT_MS)
+
+    def _activity_text(self) -> str:
+        update = self.update if isinstance(self.update, dict) else {}
+        activity = update.get("activity")
+        if not isinstance(activity, dict) or activity.get("available") is False:
+            return "暂时无法确认是否有任务在运行，更新前请留意。"
+        if not activity.get("active"):
+            return "当前没有检测到正在运行的任务。"
+        parts = []
+        if isinstance(activity.get("turns"), int) and activity["turns"] > 0:
+            parts.append(f"{activity['turns']} 个进行中的对话")
+        if isinstance(activity.get("jobs"), int) and activity["jobs"] > 0:
+            parts.append(f"{activity['jobs']} 个后台任务")
+        count = activity.get("count")
+        if not isinstance(count, int) or count <= 0:
+            count = len(activity.get("items") or [])
+        return f"检测到 {count} 个正在运行的任务（{'、'.join(parts)}）。更新会重启本地服务，这些任务会被中断。"
+
     # ── status handling ─────────────────────────────────────────────────────
     def _on_status(self, response: dict) -> None:
         self.polling = False
@@ -526,6 +727,10 @@ class Tray(QSystemTrayIcon):
         self.job = response.get("job") if isinstance(response.get("job"), dict) else None
         if isinstance(response.get("update"), dict):
             self.update = response["update"]
+            self._note_update_defer(self.update)
+        self.update_defer_until = float(response.get("updateDeferUntil") or 0)
+        if self.update_defer_until > time.time():
+            self.last_notified_update = None
         if not had_status:
             log("connected to DeepSeek Harness control socket")
 
@@ -545,16 +750,7 @@ class Tray(QSystemTrayIcon):
                 self.suppress_stop_notice = True
             self.tray_update = False
 
-        if (
-            isinstance(self.update, dict)
-            and self.update.get("updateAvailable")
-            and self.update.get("candidate") != self.last_notified_update
-        ):
-            self.last_notified_update = self.update.get("candidate")
-            self._notify(
-                "有可用更新",
-                f"DeepSeek Harness {self.update.get('candidate')}（当前 {self.update.get('current')}）",
-            )
+        self._maybe_notify_update()
         self._refresh_menu()
 
     def _handle_unreachable(self) -> None:
@@ -584,16 +780,33 @@ class Tray(QSystemTrayIcon):
             self.launch()
 
     def open_plugins(self) -> None:
-        if self.status is None:
-            self._notify("服务未运行", "请先点击托盘图标启动 DeepSeek Harness。")
-            return
-        self._run_launcher("dsh-app-controls/plugins")
+        self._open_view("plugins")
 
     def open_settings(self) -> None:
+        self._open_view("settings")
+
+    def _open_view(self, view: str) -> None:
+        """Switch the existing Web window to ``view`` instead of opening one.
+
+        The host owns the browser window, so while the service is running the
+        tray asks it to change views over the control socket and only then
+        focuses the app through the launcher.  The launcher is called without
+        a hash so an existing Chrome app window is reused.  If the service is
+        stopped, or the host predates the ``open-view`` command, fall back to
+        the launcher hash so the page still opens.
+        """
         if self.status is None:
-            self._notify("服务未运行", "请先点击托盘图标启动 DeepSeek Harness。")
+            self._run_launcher(f"dsh-app-controls/{view}")
             return
-        self._run_launcher("dsh-app-controls/settings")
+
+        def done(response: dict) -> None:
+            if response.get("ok"):
+                self._run_launcher()
+                return
+            log(f"open-view {view} failed: {response.get('error') or response.get('message')}")
+            self._run_launcher(f"dsh-app-controls/{view}")
+
+        self._request({"command": "open-view", "view": view}, done, timeout_ms=1500)
 
     def launch(self) -> None:
         if self.starting:
@@ -729,14 +942,32 @@ class Tray(QSystemTrayIcon):
             return
         if isinstance(self.update, dict) and self.update.get("updateAvailable"):
             candidate = self.update.get("candidate")
-            answer = QMessageBox.question(
-                None,
-                "更新 DeepSeek Harness",
-                f"更新到 {candidate}（当前 {self.update.get('current')}）？\n更新完成后服务会退出，需要重新启动。",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
+            activity = self.update.get("activity") if isinstance(self.update.get("activity"), dict) else {}
+            active = bool(activity.get("active"))
+            minutes = read_update_defer_minutes()
+            defer_label = "1 小时" if minutes == 60 else f"{minutes} 分钟"
+            box = QMessageBox()
+            box.setWindowTitle("更新 DeepSeek Harness")
+            box.setIcon(QMessageBox.Warning if active else QMessageBox.Information)
+            box.setText(f"发现新版本 {candidate}（当前 {self.update.get('current')}）。")
+            box.setInformativeText(
+                f"{self._activity_text()}\n\n"
+                "更新会下载新版本并重启本地服务，正在进行的对话或后台任务会被中断。\n"
+                f"你可以立即更新，或推迟 {defer_label} 后再处理。"
             )
-            if answer != QMessageBox.Yes:
+            notes = self.update.get("releaseNotes")
+            if isinstance(notes, dict) and isinstance(notes.get("notes"), str) and notes["notes"].strip():
+                box.setDetailedText(notes["notes"].strip()[:4000])
+            update_button = box.addButton("立即更新", QMessageBox.AcceptRole)
+            defer_button = box.addButton(f"推迟 {defer_label}", QMessageBox.ActionRole)
+            box.addButton("取消", QMessageBox.RejectRole)
+            box.setDefaultButton(defer_button if active else update_button)
+            box.exec_()
+            clicked = box.clickedButton()
+            if clicked is defer_button:
+                self._defer_update(minutes)
+                return
+            if clicked is not update_button:
                 return
             self.tray_update = True
             self._request({"command": "update"}, self._on_update_start, timeout_ms=CHECK_TIMEOUT_MS)
@@ -826,6 +1057,96 @@ for (var pi = 0; pi < ps.length; pi++) {
         self._refresh_menu()
 
     def _make_icon(self, state: str) -> QIcon:
+        if self.icon_style == "custom":
+            icon = self._make_custom_icon(state)
+            if icon is not None:
+                return icon
+        if self.icon_style == "classic":
+            return self._make_classic_icon(state)
+        return self._make_deepseek_icon(state)
+
+    def _whale_pixmap(self) -> QPixmap | None:
+        if self._whale_source is not None:
+            return self._whale_source
+        pixmap = QPixmap(str(WHALE_ASSET))
+        if pixmap.isNull():
+            log(f"DeepSeek tray asset is missing: {WHALE_ASSET}")
+            return None
+        self._whale_source = pixmap
+        return pixmap
+
+    @staticmethod
+    def _tint_pixmap(source: QPixmap, color: QColor) -> QPixmap:
+        result = QPixmap(source.size())
+        result.fill(Qt.transparent)
+        painter = QPainter(result)
+        painter.drawPixmap(0, 0, source)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        painter.fillRect(result.rect(), color)
+        painter.end()
+        return result
+
+    def _draw_status_dot(self, pixmap: QPixmap, state: str) -> None:
+        dot = QColor(_STATE_COLORS.get(state, _STATE_COLORS["running"]))
+        ring = QColor(self._colors()["bg"])
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(ring, 3))
+        painter.setBrush(dot)
+        painter.drawEllipse(QRectF(43, 43, 17, 17))
+        painter.end()
+
+    def _make_deepseek_icon(self, state: str) -> QIcon:
+        mask = self._whale_pixmap()
+        if mask is None:
+            return self._make_classic_icon(state)
+        size = 64
+        canvas = QPixmap(size, size)
+        canvas.fill(Qt.transparent)
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        scaled = mask.scaled(58, 58, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        painter.drawPixmap((size - scaled.width()) // 2, (size - scaled.height()) // 2, scaled)
+        painter.end()
+        # The bundled asset is a white alpha mask, tinted with the current
+        # theme text colour so it stays visible on both light and dark panels.
+        tinted = self._tint_pixmap(canvas, QColor(self._colors()["text"]))
+        self._draw_status_dot(tinted, state)
+        icon = QIcon()
+        icon.addPixmap(tinted, QIcon.Normal)
+        icon.addPixmap(tinted, QIcon.Active)
+        icon.addPixmap(tinted, QIcon.Selected)
+        return icon
+
+    def _make_custom_icon(self, state: str) -> QIcon | None:
+        path = self.custom_icon_path
+        try:
+            if not path or not path.is_file():
+                return None
+            source = QPixmap(str(path))
+        except Exception:
+            source = QPixmap()
+        if source.isNull():
+            if not self._custom_icon_fallback_logged:
+                self._custom_icon_fallback_logged = True
+                log(f"custom tray icon is not readable: {path}; using DeepSeek icon")
+            return None
+        size = 64
+        canvas = QPixmap(size, size)
+        canvas.fill(Qt.transparent)
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        scaled = source.scaled(58, 58, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        painter.drawPixmap((size - scaled.width()) // 2, (size - scaled.height()) // 2, scaled)
+        painter.end()
+        self._draw_status_dot(canvas, state)
+        icon = QIcon()
+        icon.addPixmap(canvas, QIcon.Normal)
+        icon.addPixmap(canvas, QIcon.Active)
+        icon.addPixmap(canvas, QIcon.Selected)
+        return icon
+
+    def _make_classic_icon(self, state: str) -> QIcon:
         pixmap = QPixmap(64, 64)
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
@@ -859,7 +1180,10 @@ for (var pi = 0; pi < ps.length; pi++) {
         if self.job and self.job.get("active"):
             lines.append(f"更新中 · {self.job.get('percent', 0)}%")
         elif isinstance(self.update, dict) and self.update.get("updateAvailable"):
-            lines.append(f"可更新到 {self.update.get('candidate')}")
+            if self._update_deferred():
+                lines.append(f"可更新到 {self.update.get('candidate')}（已推迟到 {self._defer_time_text()}）")
+            else:
+                lines.append(f"可更新到 {self.update.get('candidate')}")
         lines.append("左键打开 · 右键菜单")
         return "\n".join(lines)
 
@@ -895,7 +1219,10 @@ for (var pi = 0; pi < ps.length; pi++) {
             self.update_action.setText(f"正在更新 {self.job.get('percent', 0)}%")
             self.update_action.setEnabled(False)
         elif isinstance(self.update, dict) and self.update.get("updateAvailable"):
-            self.update_action.setText(f"更新到 {self.update.get('candidate')}")
+            if self._update_deferred():
+                self.update_action.setText(f"更新到 {self.update.get('candidate')}（{self._defer_time_text()} 再提醒）")
+            else:
+                self.update_action.setText(f"更新到 {self.update.get('candidate')}")
             self.update_action.setEnabled(True)
         elif self.check_result:
             self.update_action.setText(self.check_result)
@@ -906,8 +1233,9 @@ for (var pi = 0; pi < ps.length; pi++) {
 
         self.status_action.setIcon(self._status_icon())
         self.restart_action.setText("重启服务" if running else "启动服务")
-        self.plugins_action.setEnabled(running)
-        self.settings_action.setEnabled(running)
+        # Navigation stays available while stopped: it launches/focuses the app.
+        self.plugins_action.setEnabled(True)
+        self.settings_action.setEnabled(True)
         self.stop_action.setEnabled(running)
         self.copy_action.setEnabled(running)
         self.logs_action.setEnabled(True)
@@ -932,6 +1260,15 @@ def run_check() -> int:
 def main() -> int:
     if "--check" in sys.argv:
         return run_check()
+    # A fresh tray is only needed when this user has no other tray helper.
+    # Checking before the lock/pid means a duplicate exits without touching
+    # tray.pid, so the host never sees a stale or foreign pid.
+    others = find_other_tray_processes()
+    if others:
+        message = "dsh-tray is already running (pid {})".format(", ".join(str(pid) for pid in sorted(others)))
+        log(message)
+        print(message, file=sys.stderr)
+        return 0
     STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock = open(LOCK_FILE, "w", encoding="utf-8")
     try:

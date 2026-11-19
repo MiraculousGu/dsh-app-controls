@@ -1,7 +1,7 @@
 {
   "name": "dsh-app-controls",
-  "version": "0.5.2",
-  "description": "DeepSeek Harness Web GUI controls, theme-aware KDE tray icon, per-feature settings, remembered window size, and safe cache cleanup.",
+  "version": "0.6.0",
+  "description": "DeepSeek Harness Web GUI controls, single-instance DeepSeek-style KDE tray icon, same-window navigation, safe update deferral with task warnings, remembered window size, and cache cleanup.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -16,6 +16,7 @@
     "cordis.patch.yml",
     "locale",
     "icon.svg",
+    "assets",
     "tray/dsh-tray.py"
   ],
   "icon": "./icon.svg",

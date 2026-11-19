@@ -4,17 +4,17 @@
 
 # dsh-app-controls
 
-Adds two controls to the DeepSeek Harness (DSH) Web GUI: **quit the local `dsh web` service** and **check / update DSH**, plus a settings panel with optional **safe cache cleanup**. The update flow installs a newer version through a staging copy and an atomic swap, shows a progress dialog, then exits the service and closes the window.
+Adds two controls to the DeepSeek Harness (DSH) Web GUI: **quit the local `dsh web` service** and **check / update DSH**, plus a settings panel with optional **safe cache cleanup**. Updates can be deferred (with a running-task warning), show release notes and a background notice, and the progress dialog can be minimized. The KDE tray uses a single DeepSeek-style icon, supports a custom icon, and opens plugin pages in the existing window.
 
 ## Plugin information
 
 | Field | Value |
 | --- | --- |
 | Name | `dsh-app-controls` (DeepSeek Harness app controls) |
-| Version | `0.5.2` |
+| Version | `0.6.0` |
 | Author | Tianrun Gu ([@MiraculousGu](https://github.com/MiraculousGu)) |
-| Environment | DeepSeek Harness `0.2.2-rc.x` **Web profile** (currently `0.2.2-rc.4`); Linux + KDE desktop, Chrome `--app` window; Node.js 20+ |
-| Features | ① **Check and update DSH**: confirm, download/install in the background, progress dialog with phase / percent / elapsed time / npm activity, atomic swap, exit and close the window. ② **Quit DSH**: confirm, gracefully stop the whole local `dsh web` service, and close the window. ③ **KDE system tray** (`tray/dsh-tray.py`): status, open, check/update, restart, stop, logs, copy URL and notifications; its menu follows the DSH light/dark theme, and silent 30-minute background checks only notify when an update exists. ④ **Plugin settings**: tray on/off, per-feature visibility, a remembered default window size and **safe cache cleanup**. |
+| Environment | DeepSeek Harness `0.2.2-rc.x` **Web profile** (currently `0.2.2-rc.5`); Linux + KDE desktop, Chrome `--app` window; Node.js 20+ |
+| Features | ① **Check and update DSH**: running-task warning, update now or defer, release notes, background notice, minimizable progress, atomic swap, exit and close. ② **Quit DSH**: confirm, gracefully stop the local `dsh web` service, and close the window. ③ **KDE tray** (`tray/dsh-tray.py`): single instance, DeepSeek/custom icon, status/open/plugins/settings/update/restart/stop/logs/copy, theme-aware menu and silent 30-minute checks. ④ **Plugin settings**: tray and icon choice, per-feature visibility, remembered window size, update policy and **safe cache cleanup**. |
 | Repository | https://github.com/MiraculousGu/dsh-app-controls |
 | License | MIT |
 
@@ -28,8 +28,8 @@ Adds two controls to the DeepSeek Harness (DSH) Web GUI: **quit the local `dsh w
 
 ### Check and update DeepSeek Harness
 
-1. Queries the npm registry and determines the newest version allowed by the running installation (this install tracks `^0.2.2-rc.1`, which currently resolves to `0.2.2-rc.3`).
-2. Shows the current → new version in a dialog; after confirmation a progress dialog appears with phase, percentage, elapsed time and the latest npm activity line.
+1. Queries the npm registry and determines the newest version allowed by the running installation (this install tracks `^0.2.2-rc.1`, which currently resolves to `0.2.2-rc.5`).
+2. Shows the current → new version and GitHub release notes, warns when conversations or background jobs are still running, and lets you update now or defer for the configured time (default 60 minutes). After confirmation, a progress dialog shows phase, percentage, elapsed time and the latest npm activity line; it can be minimized to a floating pill so the page stays usable. Background checks show a toast when an update is available, but remain silent when already current.
 3. Installs the new version into a **staging copy** of the installation root, verifies the version, then atomically swaps it in. The live files stay untouched until that final swap.
 4. On success the service exits and the window closes; relaunch with the desktop shortcut to run the new version.
 
@@ -50,7 +50,10 @@ opening the Web GUI:
 - Right-click menu: **Open**, **Open Plugins**, **Plugin settings**, **Check for
   updates / Update to vX**, **Restart service**, **Stop service** (the open page
   closes its window itself), **Open logs**, **Copy URL**, **Quit tray**.
-- Notifications: update available/completed, service stopped, start failure. Background checks run every 30 minutes; when the installed version is already current no notification is shown.
+- Notifications: update available/completed, service stopped, start failure. Background checks run at startup and every 30 minutes; an available update is announced once, while an up-to-date or failed automatic check stays silent.
+- Single instance: the helper scans `/proc` for another `dsh-tray.py` and exits instead of creating a second icon.
+- Icon: **DeepSeek** whale (theme-tinted) by default, **classic** power icon, or a **custom** PNG; switch it in plugin settings.
+- Same-window navigation: **Open Plugins** / **Plugin settings** send an `open-view` command to the host so the existing app window navigates instead of opening a new window.
 - Restarting waits for the old service to release its port before launching the replacement, so a graceful shutdown cannot leave a half-started service.
 - The tray menu follows the DSH light/dark theme (reading the `ui-theme` preference and the system palette) and rebuilds its icons when the theme changes.
 - At login the helper waits for Plasma's tray to become ready and pins itself into the KDE panel's shown items, so KDE does not leave it in the expanded/overflow area.
@@ -67,11 +70,13 @@ Start it with `python3 tray/dsh-tray.py`, diagnose with
 
 Open **Plugins → DeepSeek Harness 应用控制** and use the settings section at the bottom (the tray menu's **Plugin settings** opens it too):
 
-- **System tray icon** — enables/disables the tray helper and its login autostart.
+- **System tray** — enables/disables the tray helper and its login autostart.
+- **Tray icon** — DeepSeek, classic, or custom PNG path.
 - **Button visibility** — check/update button, quit button, conversation-header entry and main-interface top-right entry.
 - **Default window size** — width/height, **Remember current size** and **Use automatic size**. Applied the next time a window opens.
+- **Update settings** — background auto-check (30 minutes) and default defer duration (5 minutes to 7 days).
 
-Settings live in `~/.local/state/dsh-app-controls/settings.json` and are shared by the host, tray and launcher. Tray enable/disable and the window size are applied on the next DSH start/window launch; button visibility changes immediately. The launcher uses a dedicated Chrome profile (`~/.local/share/dsh-web-chrome`) so the saved `--window-size` is reliably applied; DSH authentication is still seeded by the launch token.
+Settings live in `~/.local/state/dsh-app-controls/settings.json` and are shared by the host, tray and launcher. Tray enable/disable and the tray icon apply immediately; the default window size applies on the next window launch, and button visibility changes immediately. The launcher uses a dedicated Chrome profile (`~/.local/share/dsh-web-chrome`) so the saved `--window-size` is reliably applied; DSH authentication is still seeded by the launch token.
 
 ### Cache cleanup
 
@@ -142,10 +147,10 @@ MIT © 2026 Tianrun Gu. See [LICENSE](LICENSE).
 | 项目 | 内容 |
 | --- | --- |
 | 名称 | `dsh-app-controls`（DeepSeek Harness 应用控制） |
-| 版本 | `0.5.2` |
+| 版本 | `0.6.0` |
 | 作者 | Tianrun Gu（[@MiraculousGu](https://github.com/MiraculousGu)） |
-| 适用环境 | DeepSeek Harness `0.2.2-rc.x` 的 **Web profile**（当前 `0.2.2-rc.4`）；Linux + KDE 桌面、Chrome `--app` 应用窗口；Node.js 20+ |
-| 功能 | ① **检查并更新 DSH**：确认后后台下载安装，进度弹窗显示阶段 / 百分比 / 已用时 / npm 活动日志，完成后原子切换、退出服务并自动关窗。② **退出 DSH**：确认后优雅结束整个本地 `dsh web` 服务并自动关窗。③ **KDE 系统托盘**（`tray/dsh-tray.py`）：状态、打开、检查/更新、重启、停止、日志、复制地址与通知；菜单随 DSH 明暗主题切换，后台每 30 分钟静默检查，只有发现新版本才通知。④ **插件设置**：托盘开关、各功能显示/隐藏、可记住的默认启动窗口大小，以及**安全缓存清理**。 |
+| 适用环境 | DeepSeek Harness `0.2.2-rc.x` 的 **Web profile**（当前 `0.2.2-rc.5`）；Linux + KDE 桌面、Chrome `--app` 应用窗口；Node.js 20+ |
+| 功能 | ① **检查并更新 DSH**：运行任务风险提示、立即更新或推迟、更新说明、后台提示、可最小化进度、原子切换、退出并关窗。② **退出 DSH**：确认后优雅结束本地 `dsh web` 服务并自动关窗。③ **KDE 托盘**（`tray/dsh-tray.py`）：单实例、DeepSeek/自定义图标、状态/打开/插件/设置/更新/重启/停止/日志/复制、主题菜单与 30 分钟静默检查。④ **插件设置**：托盘与图标、功能显示、窗口大小、更新策略与**安全缓存清理**。 |
 | 仓库 | https://github.com/MiraculousGu/dsh-app-controls |
 | 许可证 | MIT |
 
@@ -159,8 +164,8 @@ MIT © 2026 Tianrun Gu. See [LICENSE](LICENSE).
 
 ### 检查并更新 DeepSeek Harness
 
-1. 查询 npm registry，确定当前安装允许更新的最新版本（本安装跟踪 `^0.2.2-rc.1`，当前解析为 `0.2.2-rc.3`）。
-2. 弹窗显示当前版本 → 新版本；确认后进入进度弹窗（阶段、百分比、已用时、npm 活动日志）。
+1. 查询 npm registry，确定当前安装允许更新的最新版本（本安装跟踪 `^0.2.2-rc.1`，当前解析为 `0.2.2-rc.5`）。
+2. 弹窗显示当前版本 → 新版本及 GitHub 更新说明；检测到仍在运行的对话或后台任务时给出风险提示，可选择立即更新或按设置推迟（默认 60 分钟）。确认后进入进度弹窗（阶段、百分比、已用时、npm 活动日志），并可最小化为悬浮胶囊；后台发现新版本会提示，已是最新版本则保持静默。
 3. 把新版本安装到安装根目录的**副本**中，校验版本后原子切换；切换前运行中的文件不受影响。
 4. 成功后自动退出服务并关闭窗口，用桌面快捷方式重新启动即为新版本。
 
@@ -177,7 +182,10 @@ MIT © 2026 Tianrun Gu. See [LICENSE](LICENSE).
 - Tooltip：状态、版本、地址、运行时长、可更新版本与更新进度；
 - 左键：打开/聚焦 Web 界面（服务未运行时先启动）；
 - 右键菜单：**打开**、**打开插件管理**、**插件设置**、**检查更新 / 更新到 vX**、**重启服务**、**停止服务**（打开中的页面会自行关闭窗口）、**打开日志**、**复制访问地址**、**退出托盘**；
-- 通知：更新可用/完成、服务停止、启动失败；后台每 30 分钟检查一次，已是最新版本时不弹通知；
+- 通知：更新可用/完成、服务停止、启动失败；启动时和之后每 30 分钟在后台检查，发现新版本只提醒一次，已是最新版本或自动检查失败时不弹通知；
+- 单实例：启动前扫描 `/proc` 中其他 `dsh-tray.py`，已有实例则退出，不再出现两个图标；
+- 图标：默认 DeepSeek 鲸鱼（按主题着色），也可选经典电源图标或自定义 PNG；
+- 同窗导航：菜单“打开插件管理/插件设置”通过 `open-view` 让现有窗口切页，不再新开窗口；
 - 重启时会先等待旧服务释放端口，再启动新服务，避免正常退出过程中出现服务没有真正重启的情况；
 - 托盘菜单随 DSH 明暗主题切换（读取 `ui-theme` 偏好并结合系统调色板），主题变化时重建图标；
 - 登录时如果 Plasma 面板/系统托盘尚未就绪，会等待并自动把图标固定到面板显示项，不会被 KDE 收进折叠区。
@@ -189,11 +197,13 @@ MIT © 2026 Tianrun Gu. See [LICENSE](LICENSE).
 
 打开 **插件 → DeepSeek Harness 应用控制**，使用详情底部的设置区（托盘菜单的 **插件设置** 也会打开这里）：
 
-- **系统托盘图标**：启用/停用托盘 helper 及登录自启；
+- **系统托盘**：启用/停用托盘 helper 及登录自启；
+- **托盘图标**：DeepSeek、经典电源、或自定义 PNG 路径；
 - **按钮显示**：检查更新按钮、退出按钮、对话标题栏入口、主界面右上角入口；
-- **默认启动窗口大小**：宽度/高度、**记住当前窗口大小**、**恢复自动**；下次打开窗口时生效。
+- **默认启动窗口大小**：宽度/高度、**记住当前窗口大小**、**恢复自动**；下次打开窗口时生效；
+- **更新设置**：后台自动检查（30 分钟）与默认推迟时长（5 分钟到 7 天）。
 
-设置保存在 `~/.local/state/dsh-app-controls/settings.json`，由宿主、托盘和启动器共享。托盘开关与窗口大小在下次启动 DSH / 打开窗口时生效，按钮显示/隐藏立即生效。启动器使用独立的 Chrome 配置目录（`~/.local/share/dsh-web-chrome`），确保保存的 `--window-size` 可靠生效；DSH 鉴权仍通过启动令牌完成。
+设置保存在 `~/.local/state/dsh-app-controls/settings.json`，由宿主、托盘和启动器共享。托盘开关与托盘图标立即生效；默认窗口大小在下次打开窗口时生效，按钮显示/隐藏立即生效。启动器使用独立的 Chrome 配置目录（`~/.local/share/dsh-web-chrome`），确保保存的 `--window-size` 可靠生效；DSH 鉴权仍通过启动令牌完成。
 
 ### 缓存清理
 
